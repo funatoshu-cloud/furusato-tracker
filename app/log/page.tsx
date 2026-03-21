@@ -9,6 +9,7 @@ import {
 import { getPlans, updatePlan, type Plan } from '@/lib/plans'
 import { loadTaxSettings, calculate } from '@/lib/calculator'
 import { PREFECTURES } from '@/lib/prefectures'
+import { MunicipalitySelect, MunicipalityCombobox, MUNICIPALITIES } from '@/components/MunicipalitySelect'
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -80,9 +81,15 @@ function parseCsvRows(text: string): ParsedCsvRow[] {
     .map(r => {
       const [prefecture = '', municipality = '', amount = '', date = '', giftItem = '', site = '', notes = ''] = r
       const errors: string[] = []
-      if (!prefecture.trim())                                      errors.push('都道府県')
-      if (!municipality.trim())                                    errors.push('市区町村')
-      if (!amount.trim() || isNaN(Number(amount)) || Number(amount) <= 0) errors.push('金額')
+      const pref = prefecture.trim()
+      const muni = municipality.trim()
+      if (!pref)                                                       errors.push('都道府県が未入力')
+      if (!muni)                                                       errors.push('市区町村が未入力')
+      if (!amount.trim() || isNaN(Number(amount)) || Number(amount) <= 0) errors.push('金額が未入力')
+      // Validate municipality against official list when prefecture is known
+      if (pref && muni && (MUNICIPALITIES[pref] ?? []).length > 0 && !(MUNICIPALITIES[pref] ?? []).includes(muni)) {
+        errors.push('市区町村が見つかりません — スペルを確認してください')
+      }
       return { prefecture, municipality, amount, date, giftItem, site, notes, errors }
     })
 }
@@ -138,6 +145,8 @@ function ManualTab({
     if (!planId) return
     const plan = plans.find(p => p.id === planId)
     if (!plan) return
+    // Set all fields from the plan — do NOT reset municipality when prefecture changes
+    // because we are setting both simultaneously
     setForm(f => ({
       ...f,
       prefecture:   plan.prefecture,
@@ -204,20 +213,14 @@ function ManualTab({
         <span className="text-sm text-gray-600">過去の寄付として記録する</span>
       </label>
 
-      {/* 都道府県 + 市区町村 */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <Field label="都道府県" required>
-          <select className="input" value={form.prefecture}
-            onChange={e => setForm({ ...form, prefecture: e.target.value })} required>
-            <option value="" disabled>都道府県を選択</option>
-            {PREFECTURES.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-        </Field>
-        <Field label="市区町村" required>
-          <input className="input" placeholder="例: 余市町" value={form.municipality}
-            onChange={e => setForm({ ...form, municipality: e.target.value })} required />
-        </Field>
-      </div>
+      {/* 都道府県 + 市区町村 (cascading) */}
+      <MunicipalitySelect
+        prefecture={form.prefecture}
+        municipality={form.municipality}
+        onPrefectureChange={pref => setForm({ ...form, prefecture: pref, municipality: '' })}
+        onMunicipalityChange={muni => setForm({ ...form, municipality: muni })}
+        required
+      />
 
       {/* 金額 + 日付 */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -335,14 +338,18 @@ function BulkTab({ onSave }: { onSave: AddFn }) {
                 <td className={`${tdCls} text-center text-gray-400`}>{i + 1}</td>
                 <td className={tdCls}>
                   <select className="input text-xs py-1" value={row.prefecture}
-                    onChange={e => setRow(i, { prefecture: e.target.value })}>
+                    onChange={e => setRow(i, { prefecture: e.target.value, municipality: '' })}>
                     <option value="">選択</option>
                     {PREFECTURES.map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </td>
                 <td className={tdCls}>
-                  <input className="input text-xs py-1 w-28" placeholder="余市町"
-                    value={row.municipality} onChange={e => setRow(i, { municipality: e.target.value })} />
+                  <MunicipalityCombobox
+                    prefecture={row.prefecture}
+                    municipality={row.municipality}
+                    onChange={muni => setRow(i, { municipality: muni })}
+                    className="text-xs py-1 w-36"
+                  />
                 </td>
                 <td className={tdCls}>
                   <input className="input text-xs py-1 w-24" type="number" min={1} placeholder="10000"
@@ -499,10 +506,11 @@ function CsvTab({ onSave }: { onSave: AddFn }) {
                   const bad = row.errors.length > 0
                   const cell = (val: string, isErr: boolean) =>
                     `px-3 py-2 ${bad && isErr ? 'text-red-600 font-semibold' : 'text-gray-700'}`
+                  const muniNotFound = row.errors.some(e => e.includes('見つかりません'))
                   return (
                     <tr key={i} className={bad ? 'bg-red-50' : ''}>
                       <td className={cell(row.prefecture, !row.prefecture)}>{row.prefecture || '—'}</td>
-                      <td className={cell(row.municipality, !row.municipality)}>{row.municipality || '—'}</td>
+                      <td className={cell(row.municipality, !row.municipality || muniNotFound)}>{row.municipality || '—'}</td>
                       <td className={cell(row.amount, !row.amount || isNaN(Number(row.amount)))}>
                         {row.amount ? `¥${Number(row.amount).toLocaleString()}` : '—'}
                       </td>
@@ -511,9 +519,15 @@ function CsvTab({ onSave }: { onSave: AddFn }) {
                       </td>
                       <td className="px-3 py-2 text-gray-700">{row.giftItem || <span className="text-gray-400">—</span>}</td>
                       <td className="px-3 py-2 text-gray-700">{row.site || <span className="text-gray-400">Rakuten</span>}</td>
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-2 max-w-[200px]">
                         {bad
-                          ? <span className="text-red-600">{row.errors.join('・')}が未入力</span>
+                          ? (
+                            <ul className="space-y-0.5">
+                              {row.errors.map((e, ei) => (
+                                <li key={ei} className="text-red-600 text-[11px] leading-snug">{e}</li>
+                              ))}
+                            </ul>
+                          )
                           : <span className="text-green-600 font-medium">✓</span>}
                       </td>
                     </tr>

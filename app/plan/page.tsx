@@ -8,6 +8,7 @@ import {
 import { addDonation, getDonations } from '@/lib/storage'
 import { loadTaxSettings, calculate } from '@/lib/calculator'
 import { PREFECTURES } from '@/lib/prefectures'
+import { MunicipalitySelect } from '@/components/MunicipalitySelect'
 import { yen } from '@/lib/format'
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -228,35 +229,13 @@ function PlanModal({ initial, onClose, onSave, title }: PlanModalProps) {
       >
         <h3 className="text-base font-semibold text-gray-900">{title}</h3>
         <form onSubmit={handleSubmit} className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
-                都道府県<span className="text-red-500 ml-0.5">*</span>
-              </label>
-              <select
-                value={form.prefecture}
-                onChange={e => set('prefecture', e.target.value)}
-                className="input"
-              >
-                {PREFECTURES.map(p => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
-                市区町村<span className="text-red-500 ml-0.5">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="例：上富良野町"
-                value={form.municipality}
-                onChange={e => set('municipality', e.target.value)}
-                className="input"
-              />
-            </div>
-          </div>
+          <MunicipalitySelect
+            prefecture={form.prefecture}
+            municipality={form.municipality}
+            onPrefectureChange={pref => setForm(f => ({ ...f, prefecture: pref, municipality: '' }))}
+            onMunicipalityChange={muni => set('municipality', muni)}
+            required
+          />
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
