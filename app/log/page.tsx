@@ -6,6 +6,7 @@ import {
   getDonations, addDonation, deleteDonation,
   type Donation, type DonationSite,
 } from '@/lib/storage'
+import { getPlans, updatePlan, type Plan } from '@/lib/plans'
 import { loadTaxSettings, calculate } from '@/lib/calculator'
 import { PREFECTURES } from '@/lib/prefectures'
 
@@ -107,7 +108,15 @@ function Field({ label, required, children }: {
 
 // ── 1. Manual entry tab ───────────────────────────────────────────────────────
 
-function ManualTab({ onSave }: { onSave: AddFn }) {
+function ManualTab({
+  onSave,
+  plans,
+  onPlanCompleted,
+}: {
+  onSave: AddFn
+  plans: Plan[]
+  onPlanCompleted: (planId: string) => void
+}) {
   const empty = {
     prefecture: '' as string,
     municipality: '',
@@ -121,6 +130,23 @@ function ManualTab({ onSave }: { onSave: AddFn }) {
   const [form, setForm] = useState(empty)
   const [isPast, setIsPast] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [linkedPlanId, setLinkedPlanId] = useState('')
+
+  function handlePlanChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const planId = e.target.value
+    setLinkedPlanId(planId)
+    if (!planId) return
+    const plan = plans.find(p => p.id === planId)
+    if (!plan) return
+    setForm(f => ({
+      ...f,
+      prefecture:   plan.prefecture,
+      municipality: plan.municipality,
+      amount:       String(plan.plannedAmount),
+      site:         plan.site as DonationSite,
+      giftItem:     plan.targetGiftItem || f.giftItem,
+    }))
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -133,6 +159,10 @@ function ManualTab({ onSave }: { onSave: AddFn }) {
       site:         form.site,
       notes:        form.notes,
     }])
+    if (linkedPlanId) {
+      onPlanCompleted(linkedPlanId)
+      setLinkedPlanId('')
+    }
     setForm({ ...empty, date: isPast ? '' : TODAY })
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
@@ -140,6 +170,26 @@ function ManualTab({ onSave }: { onSave: AddFn }) {
 
   return (
     <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
+      {/* Linked plan */}
+      {plans.length > 0 && (
+        <Field label="プランからインポート（任意）">
+          <select className="input" value={linkedPlanId} onChange={handlePlanChange}>
+            <option value="">— プランを選択してリンクする —</option>
+            {plans.map(p => (
+              <option key={p.id} value={p.id}>
+                {p.year}年　{p.prefecture} {p.municipality}　¥{p.plannedAmount.toLocaleString()}
+                {p.targetGiftItem ? `　（${p.targetGiftItem}）` : ''}
+              </option>
+            ))}
+          </select>
+          {linkedPlanId && (
+            <p className="text-xs text-blue-600 mt-1">
+              📋 保存時にこのプランを「寄付済み」にマークします
+            </p>
+          )}
+        </Field>
+      )}
+
       {/* Past donation toggle */}
       <label className="flex items-center gap-2 cursor-pointer select-none w-fit">
         <input
@@ -494,11 +544,13 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function LogPage() {
   const [donations, setDonations] = useState<Donation[]>([])
+  const [plans,     setPlans]     = useState<Plan[]>([])
   const [limit, setLimit]         = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('manual')
 
   useEffect(() => {
     setDonations(getDonations())
+    setPlans(getPlans())
     const settings = loadTaxSettings()
     if (settings && settings.income > 0) setLimit(calculate(settings).limit)
   }, [])
@@ -506,6 +558,14 @@ export default function LogPage() {
   function handleAddDonations(items: Omit<Donation, 'id'>[]) {
     const added = items.map(d => addDonation(d))
     setDonations(prev => [...prev, ...added])
+  }
+
+  function handlePlanCompleted(planId: string) {
+    const plan = plans.find(p => p.id === planId)
+    if (!plan) return
+    const completed: Plan = { ...plan, status: 'completed' }
+    updatePlan(completed)
+    setPlans(prev => prev.map(p => p.id === planId ? completed : p))
   }
 
   function handleDelete(id: string) {
@@ -575,7 +635,13 @@ export default function LogPage() {
 
       {/* ── tab content ── */}
       <div className="mb-8">
-        {activeTab === 'manual' && <ManualTab onSave={handleAddDonations} />}
+        {activeTab === 'manual' && (
+          <ManualTab
+            onSave={handleAddDonations}
+            plans={plans.filter(p => p.status === 'planned')}
+            onPlanCompleted={handlePlanCompleted}
+          />
+        )}
         {activeTab === 'bulk'   && <BulkTab   onSave={handleAddDonations} />}
         {activeTab === 'csv'    && <CsvTab    onSave={handleAddDonations} />}
       </div>

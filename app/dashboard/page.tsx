@@ -8,6 +8,7 @@ import {
   PieChart, Pie, Cell, Legend,
 } from 'recharts'
 import { getDonations, type Donation, type DonationSite } from '@/lib/storage'
+import { getPlans, type Plan } from '@/lib/plans'
 import { loadTaxSettings, calculate } from '@/lib/calculator'
 import { yen } from '@/lib/format'
 
@@ -29,25 +30,40 @@ const PIE_COLORS = ['#16a34a', '#2563eb', '#f59e0b', '#94a3b8']
 type SortField = 'date' | 'amount'
 type SortDir   = 'asc'  | 'desc'
 
+function yearLabel(y: number | 'all') {
+  return y === 'all' ? '全年度' : `${y}年`
+}
+
 // ── page ──────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const [donations, setDonations] = useState<Donation[]>([])
-  const [limit, setLimit]         = useState<number | null>(null)
-  const [sortField, setSortField] = useState<SortField>('date')
-  const [sortDir,   setSortDir]   = useState<SortDir>('desc')
+  const [donations,    setDonations]    = useState<Donation[]>([])
+  const [plans,        setPlans]        = useState<Plan[]>([])
+  const [limit,        setLimit]        = useState<number | null>(null)
+  const [sortField,    setSortField]    = useState<SortField>('date')
+  const [sortDir,      setSortDir]      = useState<SortDir>('desc')
+  const [selectedYear, setSelectedYear] = useState<number | 'all'>(CURRENT_YEAR)
 
   useEffect(() => {
     setDonations(getDonations())
+    setPlans(getPlans())
     const s = loadTaxSettings()
     if (s && s.income > 0) setLimit(calculate(s).limit)
   }, [])
 
   // ── derived data ────────────────────────────────────────────────────────────
 
-  const thisYear = useMemo(
-    () => donations.filter((d) => d.date.startsWith(String(CURRENT_YEAR))),
+  const availableYears = useMemo(
+    () => [...new Set(donations.map(d => Number(d.date.slice(0, 4))))].sort((a, b) => b - a),
     [donations],
+  )
+
+  // Donations filtered to the selected year (or all)
+  const thisYear = useMemo(
+    () => selectedYear === 'all'
+      ? donations
+      : donations.filter(d => d.date.startsWith(String(selectedYear))),
+    [donations, selectedYear],
   )
 
   const totalThisYear = useMemo(
@@ -93,6 +109,17 @@ export default function DashboardPage() {
     })
   }, [thisYear, sortField, sortDir])
 
+  // Plans for the selected year (or current year when "all" is selected)
+  const plansYear = selectedYear === 'all' ? CURRENT_YEAR : selectedYear
+  const yearPlans = useMemo(
+    () => plans.filter(p => p.year === plansYear && p.status !== 'cancelled'),
+    [plans, plansYear],
+  )
+  const totalPlanned = useMemo(
+    () => yearPlans.reduce((s, p) => s + p.plannedAmount, 0),
+    [yearPlans],
+  )
+
   function toggleSort(field: SortField) {
     if (sortField === field) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     else { setSortField(field); setSortDir('desc') }
@@ -105,29 +132,45 @@ export default function DashboardPage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `furusato-${CURRENT_YEAR}.json`
+    a.download = `furusato-${selectedYear === 'all' ? 'all' : selectedYear}.json`
     a.click()
     URL.revokeObjectURL(url)
   }
 
   return (
     <div className="p-4 sm:p-8 max-w-5xl space-y-8">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <h2 className="text-2xl font-bold text-gray-900">ダッシュボード</h2>
-        {thisYear.length > 0 && (
-          <button
-            onClick={handleExport}
-            className="px-3 py-1.5 text-xs font-medium bg-gray-900 hover:bg-gray-700 text-white rounded-lg transition-colors shrink-0"
-          >
-            JSON エクスポート
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {/* Year selector */}
+          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-1.5">
+            <span className="text-xs text-gray-500 font-medium select-none">年度</span>
+            <select
+              value={selectedYear === 'all' ? 'all' : String(selectedYear)}
+              onChange={e => setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+              className="text-sm font-semibold text-gray-900 border-none outline-none bg-transparent cursor-pointer"
+            >
+              <option value="all">全年度</option>
+              {availableYears.map(y => (
+                <option key={y} value={String(y)}>{y}年</option>
+              ))}
+            </select>
+          </div>
+          {thisYear.length > 0 && (
+            <button
+              onClick={handleExport}
+              className="px-3 py-1.5 text-xs font-medium bg-gray-900 hover:bg-gray-700 text-white rounded-lg transition-colors shrink-0"
+            >
+              JSON エクスポート
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ── summary cards ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         <StatCard
-          label={`${CURRENT_YEAR}年の寄付合計`}
+          label={`${yearLabel(selectedYear)}の寄付合計`}
           value={yen(totalThisYear)}
           sub={
             limit !== null
@@ -149,12 +192,20 @@ export default function DashboardPage() {
           linkLabel="上限を設定 →"
         />
         <StatCard
-          label={`${CURRENT_YEAR}年の寄付自治体数`}
+          label={`${yearLabel(selectedYear)}の寄付自治体数`}
           value={`${municipalityCount} 自治体`}
         />
         <StatCard
-          label="最多寄付都道府県"
+          label={`${yearLabel(selectedYear)}の最多寄付県`}
           value={topPrefecture}
+        />
+        <StatCard
+          label={`${plansYear}年のプラン`}
+          value={`${yearPlans.length} 件`}
+          sub={yearPlans.length > 0 ? `計画合計 ${yen(totalPlanned)}` : 'プランがありません'}
+          accent={yearPlans.length > 0 ? 'blue' : 'default'}
+          linkHref="/plan"
+          linkLabel="プランを見る →"
         />
       </div>
 
@@ -163,7 +214,7 @@ export default function DashboardPage() {
         {/* monthly bar chart — 2/3 */}
         <section className="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-5">
           <h3 className="text-sm font-semibold text-gray-700 mb-4">
-            月別寄付額（{CURRENT_YEAR}年）
+            月別寄付額（{yearLabel(selectedYear)}）
           </h3>
           {thisYear.length === 0 ? (
             <ChartEmpty />
@@ -245,7 +296,7 @@ export default function DashboardPage() {
       <section className="bg-white rounded-xl border border-gray-200">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-gray-700">
-            {CURRENT_YEAR}年 寄付一覧
+            {yearLabel(selectedYear)} 寄付一覧
           </h3>
           <span className="text-xs text-gray-400">{thisYear.length} 件</span>
         </div>
@@ -317,7 +368,7 @@ function StatCard({
   label: string
   value: string
   sub?: string
-  accent?: 'green' | 'red' | 'default'
+  accent?: 'green' | 'blue' | 'red' | 'default'
   linkHref?: string
   linkLabel?: string
 }) {
@@ -326,6 +377,7 @@ function StatCard({
       <p className="text-xs text-gray-500 mb-1 leading-tight">{label}</p>
       <p className={`text-xl font-bold leading-snug ${
         accent === 'green' ? 'text-green-700' :
+        accent === 'blue'  ? 'text-blue-700'  :
         accent === 'red'   ? 'text-red-600'   :
         'text-gray-900'
       }`}>

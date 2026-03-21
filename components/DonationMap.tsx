@@ -5,6 +5,7 @@ import { MapContainer, TileLayer, GeoJSON, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import type { Donation, DonationSite } from '@/lib/storage'
+import { getPlans, type Plan } from '@/lib/plans'
 import { PREF_CODE } from '@/lib/prefectureCodes'
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -89,17 +90,39 @@ const AFFILIATE_LINKS_HTML = `
     </div>
   </div>`
 
+function buildPlansHtml(activePlans: Plan[]): string {
+  if (activePlans.length === 0) return ''
+  const rows = activePlans.slice(0, 3).map(p => `
+    <div style="font-size:12px;color:#374151;padding:2px 0;display:flex;justify-content:space-between;gap:8px;">
+      <span style="color:#6b7280;">${esc(p.municipality)}</span>
+      <span style="font-weight:600;white-space:nowrap;color:#3b82f6;">¥${p.plannedAmount.toLocaleString()}</span>
+    </div>`).join('')
+  const more = activePlans.length > 3
+    ? `<p style="font-size:11px;color:#9ca3af;margin:3px 0 0;">他${activePlans.length - 3}件…</p>`
+    : ''
+  return `
+    <div style="padding-top:8px;border-top:1px solid #e5e7eb;margin-top:4px;">
+      <p style="font-size:10px;font-weight:600;color:#9ca3af;letter-spacing:.06em;text-transform:uppercase;margin:0 0 5px;">
+        📋 計画中
+      </p>
+      ${rows}${more}
+    </div>`
+}
+
 function buildPrefPopupHtml(
   prefName: string,
   allDs: Donation[],
   year: number | 'all',
+  activePlans: Plan[],
 ): string {
   const header = `<h3 style="font-size:15px;font-weight:700;margin:0 0 8px;color:#111827;">${esc(prefName)}</h3>`
+  const plansHtml = buildPlansHtml(activePlans)
 
   if (allDs.length === 0) {
     return `<div style="min-width:230px;font-family:system-ui,-apple-system,sans-serif;">
       ${header}
       <p style="font-size:13px;color:#d1d5db;margin:0 0 10px;">まだ寄付していません</p>
+      ${plansHtml}
       ${AFFILIATE_LINKS_HTML}
     </div>`
   }
@@ -129,6 +152,7 @@ function buildPrefPopupHtml(
         </tr></thead>
         <tbody>${yearRows}</tbody>
       </table>
+      ${plansHtml}
       ${AFFILIATE_LINKS_HTML}
     </div>`
   }
@@ -140,6 +164,7 @@ function buildPrefPopupHtml(
     return `<div style="min-width:230px;font-family:system-ui,-apple-system,sans-serif;">
       ${header}
       <p style="font-size:13px;color:#d1d5db;margin:0 0 10px;">${year}年の寄付はありません</p>
+      ${plansHtml}
       ${AFFILIATE_LINKS_HTML}
     </div>`
   }
@@ -156,6 +181,7 @@ function buildPrefPopupHtml(
       <p style="font-size:10px;font-weight:600;color:#9ca3af;letter-spacing:.06em;text-transform:uppercase;margin:0 0 4px;">返礼品</p>
       ${items}
     </div>
+    ${plansHtml}
     ${AFFILIATE_LINKS_HTML}
   </div>`
 }
@@ -463,6 +489,10 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
   const CURRENT_YEAR = new Date().getFullYear()
   const [selectedYear, setSelectedYear] = useState<number | 'all'>(CURRENT_YEAR)
 
+  // Plans
+  const [plans, setPlans] = useState<Plan[]>([])
+  useEffect(() => { setPlans(getPlans()) }, [])
+
   // Log modal
   const [logModal, setLogModal] = useState<ModalState | null>(null)
 
@@ -521,13 +551,22 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
     ;(byPrefectureAll[d.prefecture] ??= []).push(d)
   }
 
+  // Active (planned) plans by prefecture: used for popup plans section
+  const activePlansByPref: Record<string, Plan[]> = {}
+  for (const p of plans) {
+    if (p.status === 'planned') {
+      ;(activePlansByPref[p.prefecture] ??= []).push(p)
+    }
+  }
+
   const maxAmount = Math.max(
     1,
     ...Object.values(byPrefecture).map((ds) => ds.reduce((s, d) => s + d.amount, 0)),
   )
 
-  // Key includes selectedPref + selectedYear so layer remounts with fresh closures on change
-  const geoKey = `pref:${selectedPref ?? '_'}:year:${selectedYear}|` + Object.entries(byPrefecture)
+  // Key includes selectedPref + selectedYear + plan count so layer remounts with fresh closures on change
+  const activePlanCount = plans.filter(p => p.status === 'planned').length
+  const geoKey = `pref:${selectedPref ?? '_'}:year:${selectedYear}:ap:${activePlanCount}|` + Object.entries(byPrefecture)
     .map(([p, ds]) => `${p}:${ds.reduce((s, d) => s + d.amount, 0)}`)
     .join('|')
 
@@ -551,7 +590,7 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
     if (!name) return
 
     layer.bindTooltip(name, { sticky: true, direction: 'center' })
-    layer.bindPopup(buildPrefPopupHtml(name, byPrefectureAll[name] ?? [], selectedYear), { maxWidth: 300 })
+    layer.bindPopup(buildPrefPopupHtml(name, byPrefectureAll[name] ?? [], selectedYear, activePlansByPref[name] ?? []), { maxWidth: 300 })
 
     const path = layer as L.Path
     const ds = byPrefecture[name] ?? []
