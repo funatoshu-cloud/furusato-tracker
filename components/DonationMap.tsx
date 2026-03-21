@@ -67,9 +67,103 @@ function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
+const AFFILIATE_LINKS_HTML = `
+  <div style="padding-top:8px;border-top:1px solid #e5e7eb;">
+    <p style="font-size:10px;font-weight:600;color:#9ca3af;letter-spacing:.06em;text-transform:uppercase;margin:0 0 6px;">
+      返礼品を探す
+      <span style="font-size:9px;font-weight:400;color:#d1d5db;margin-left:4px;">※広告リンク</span>
+    </p>
+    <div style="display:flex;flex-direction:column;gap:5px;">
+      <a href="https://item.rakuten.co.jp/furusato/" target="_blank" rel="noopener noreferrer"
+         style="display:flex;align-items:center;gap:6px;font-size:12px;color:#bf0000;text-decoration:none;padding:5px 8px;background:#fff5f5;border-radius:6px;border:1px solid #fecaca;">
+        <span>🛒</span><span>楽天ふるさと納税</span>
+      </a>
+      <a href="https://www.satofull.jp/" target="_blank" rel="noopener noreferrer"
+         style="display:flex;align-items:center;gap:6px;font-size:12px;color:#1d4ed8;text-decoration:none;padding:5px 8px;background:#eff6ff;border-radius:6px;border:1px solid #bfdbfe;">
+        <span>🛒</span><span>さとふる</span>
+      </a>
+      <a href="https://www.furusato-tax.jp/" target="_blank" rel="noopener noreferrer"
+         style="display:flex;align-items:center;gap:6px;font-size:12px;color:#065f46;text-decoration:none;padding:5px 8px;background:#ecfdf5;border-radius:6px;border:1px solid #a7f3d0;">
+        <span>🛒</span><span>ふるさとチョイス</span>
+      </a>
+    </div>
+  </div>`
+
+function buildPrefPopupHtml(
+  prefName: string,
+  allDs: Donation[],
+  year: number | 'all',
+): string {
+  const header = `<h3 style="font-size:15px;font-weight:700;margin:0 0 8px;color:#111827;">${esc(prefName)}</h3>`
+
+  if (allDs.length === 0) {
+    return `<div style="min-width:230px;font-family:system-ui,-apple-system,sans-serif;">
+      ${header}
+      <p style="font-size:13px;color:#d1d5db;margin:0 0 10px;">まだ寄付していません</p>
+      ${AFFILIATE_LINKS_HTML}
+    </div>`
+  }
+
+  if (year === 'all') {
+    const total = allDs.reduce((s, d) => s + d.amount, 0)
+    const byYear: Record<string, number> = {}
+    for (const d of allDs) {
+      const y = d.date.slice(0, 4)
+      byYear[y] = (byYear[y] ?? 0) + d.amount
+    }
+    const yearRows = Object.keys(byYear)
+      .sort((a, b) => Number(b) - Number(a))
+      .map(y => `<tr>
+        <td style="padding:2px 10px 2px 0;color:#6b7280;">${y}年</td>
+        <td style="padding:2px 0;font-weight:600;color:#111827;white-space:nowrap;">¥${byYear[y].toLocaleString()}</td>
+      </tr>`)
+      .join('')
+    return `<div style="min-width:230px;font-family:system-ui,-apple-system,sans-serif;">
+      ${header}
+      <p style="font-size:12px;color:#6b7280;margin:0 0 2px;">累計 ${allDs.length}件</p>
+      <p style="font-size:18px;font-weight:700;color:#16a34a;margin:0 0 8px;">¥${total.toLocaleString()}</p>
+      <table style="font-size:12px;margin-bottom:10px;width:100%;border-collapse:collapse;">
+        <thead><tr>
+          <th style="text-align:left;font-size:10px;font-weight:600;color:#9ca3af;padding-bottom:3px;">年度</th>
+          <th style="text-align:left;font-size:10px;font-weight:600;color:#9ca3af;padding-bottom:3px;">合計</th>
+        </tr></thead>
+        <tbody>${yearRows}</tbody>
+      </table>
+      ${AFFILIATE_LINKS_HTML}
+    </div>`
+  }
+
+  // Specific year
+  const yearStr = String(year)
+  const yearDs = allDs.filter(d => d.date.startsWith(yearStr))
+  if (yearDs.length === 0) {
+    return `<div style="min-width:230px;font-family:system-ui,-apple-system,sans-serif;">
+      ${header}
+      <p style="font-size:13px;color:#d1d5db;margin:0 0 10px;">${year}年の寄付はありません</p>
+      ${AFFILIATE_LINKS_HTML}
+    </div>`
+  }
+  const total = yearDs.reduce((s, d) => s + d.amount, 0)
+  const items = yearDs.map(d => `
+    <div style="font-size:12px;color:#374151;padding:3px 0;border-bottom:1px solid #f3f4f6;">
+      <span style="color:#9ca3af;">${esc(d.municipality)}</span> — ${esc(d.giftItem)}
+    </div>`).join('')
+  return `<div style="min-width:230px;font-family:system-ui,-apple-system,sans-serif;">
+    ${header}
+    <p style="font-size:12px;color:#6b7280;margin:0 0 2px;">${year}年・${yearDs.length}件</p>
+    <p style="font-size:18px;font-weight:700;color:#16a34a;margin:0 0 8px;">¥${total.toLocaleString()}</p>
+    <div style="margin-bottom:10px;">
+      <p style="font-size:10px;font-weight:600;color:#9ca3af;letter-spacing:.06em;text-transform:uppercase;margin:0 0 4px;">返礼品</p>
+      ${items}
+    </div>
+    ${AFFILIATE_LINKS_HTML}
+  </div>`
+}
+
 // ── Legend overlay (React, not a Leaflet control) ────────────────────────────
 
-function Legend() {
+function Legend({ year }: { year: number | 'all' }) {
+  const yearLabel = year === 'all' ? '全年度' : `${year}年`
   return (
     <div
       style={{
@@ -86,7 +180,7 @@ function Legend() {
       }}
     >
       <div style={{ fontSize: 11, fontWeight: 700, color: '#374151', marginBottom: 6 }}>
-        寄付金額
+        寄付金額（{yearLabel}）
       </div>
       {LEGEND_STEPS.map(({ label, color }) => (
         <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
@@ -101,6 +195,55 @@ function Legend() {
       ))}
     </div>
   )
+}
+
+// ── geometry helpers ──────────────────────────────────────────────────────────
+
+/**
+ * For a Polygon/MultiPolygon feature, return the bounds of the single largest
+ * connected land polygon (by bounding-box area). This avoids zooming to a bbox
+ * that spans distant islands and instead centres on the main landmass.
+ */
+function mainLandBounds(feature: GeoFeature): L.LatLngBounds {
+  const geom = feature.geometry as {
+    type: string
+    coordinates: number[][][] | number[][][][]
+  }
+
+  // Collect all outer rings regardless of geometry type
+  const outerRings: number[][][] = []
+  if (geom.type === 'Polygon') {
+    outerRings.push((geom.coordinates as number[][][])[0])
+  } else if (geom.type === 'MultiPolygon') {
+    for (const poly of geom.coordinates as number[][][][]) {
+      outerRings.push(poly[0])
+    }
+  }
+
+  if (outerRings.length === 0) {
+    return L.geoJSON(feature as unknown as GeoJSON.Feature).getBounds()
+  }
+
+  let bestBounds: L.LatLngBounds | null = null
+  let bestArea = -1
+
+  for (const ring of outerRings) {
+    let minLat = Infinity, maxLat = -Infinity
+    let minLng = Infinity, maxLng = -Infinity
+    for (const [lng, lat] of ring) {
+      if (lat < minLat) minLat = lat
+      if (lat > maxLat) maxLat = lat
+      if (lng < minLng) minLng = lng
+      if (lng > maxLng) maxLng = lng
+    }
+    const area = (maxLat - minLat) * (maxLng - minLng)
+    if (area > bestArea) {
+      bestArea = area
+      bestBounds = L.latLngBounds([minLat, minLng], [maxLat, maxLng])
+    }
+  }
+
+  return bestBounds ?? L.geoJSON(feature as unknown as GeoJSON.Feature).getBounds()
 }
 
 // ── MapController — programmatic zoom inside MapContainer context ─────────────
@@ -316,6 +459,10 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
   const [muniGeoReady, setMuniGeoReady]     = useState<string | null>(null)
   const [muniLoadState, setMuniLoadState]   = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
 
+  // Year filter
+  const CURRENT_YEAR = new Date().getFullYear()
+  const [selectedYear, setSelectedYear] = useState<number | 'all'>(CURRENT_YEAR)
+
   // Log modal
   const [logModal, setLogModal] = useState<ModalState | null>(null)
 
@@ -354,10 +501,24 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
     }
   }
 
+  // ── derive available years + filter donations ─────────────────────
+  const availableYears = [...new Set(donations.map(d => Number(d.date.slice(0, 4))))].sort((a, b) => b - a)
+
+  const visibleDonations = selectedYear === 'all'
+    ? donations
+    : donations.filter(d => d.date.startsWith(String(selectedYear)))
+
   // ── group donations by prefecture ─────────────────────────────────
+  // visibleDonations: used for coloring + municipality highlights
   const byPrefecture: Record<string, Donation[]> = {}
-  for (const d of donations) {
+  for (const d of visibleDonations) {
     ;(byPrefecture[d.prefecture] ??= []).push(d)
+  }
+
+  // allDonations by prefecture: used for popup year-breakdown
+  const byPrefectureAll: Record<string, Donation[]> = {}
+  for (const d of donations) {
+    ;(byPrefectureAll[d.prefecture] ??= []).push(d)
   }
 
   const maxAmount = Math.max(
@@ -365,8 +526,8 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
     ...Object.values(byPrefecture).map((ds) => ds.reduce((s, d) => s + d.amount, 0)),
   )
 
-  // Key includes selectedPref so layer remounts (fresh closures) on every drill-down change
-  const geoKey = `pref:${selectedPref ?? '_'}|` + Object.entries(byPrefecture)
+  // Key includes selectedPref + selectedYear so layer remounts with fresh closures on change
+  const geoKey = `pref:${selectedPref ?? '_'}:year:${selectedYear}|` + Object.entries(byPrefecture)
     .map(([p, ds]) => `${p}:${ds.reduce((s, d) => s + d.amount, 0)}`)
     .join('|')
 
@@ -390,6 +551,7 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
     if (!name) return
 
     layer.bindTooltip(name, { sticky: true, direction: 'center' })
+    layer.bindPopup(buildPrefPopupHtml(name, byPrefectureAll[name] ?? [], selectedYear), { maxWidth: 300 })
 
     const path = layer as L.Path
     const ds = byPrefecture[name] ?? []
@@ -411,7 +573,7 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
         })
       },
       click() {
-        const bounds = L.geoJSON(feature as unknown as GeoJSON.Feature).getBounds()
+        const bounds = mainLandBounds(feature)
         setSelectedPref(name)
         setPrefBounds(bounds)
         setMuniLoadState('idle')
@@ -541,6 +703,34 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
         )}
       </MapContainer>
 
+      {/* Year selector */}
+      <div style={{
+        position: 'absolute', top: 10, right: 10, zIndex: 999,
+        display: 'flex', alignItems: 'center', gap: 6,
+        background: 'white',
+        border: '1px solid #d1d5db',
+        borderRadius: 8,
+        padding: '5px 10px',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+        fontFamily: 'system-ui,-apple-system,sans-serif',
+      }}>
+        <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 500, userSelect: 'none' }}>年度</span>
+        <select
+          value={selectedYear === 'all' ? 'all' : String(selectedYear)}
+          onChange={e => setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+          style={{
+            fontSize: 13, fontWeight: 600, color: '#111827',
+            border: 'none', outline: 'none', background: 'transparent',
+            cursor: 'pointer', appearance: 'auto',
+          }}
+        >
+          <option value="all">全年度</option>
+          {availableYears.map(y => (
+            <option key={y} value={String(y)}>{y}年</option>
+          ))}
+        </select>
+      </div>
+
       {/* Back button */}
       {selectedPref && (
         <button
@@ -604,7 +794,7 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
         </div>
       )}
 
-      <Legend />
+      <Legend year={selectedYear} />
 
       {/* Log donation modal */}
       {logModal && (
