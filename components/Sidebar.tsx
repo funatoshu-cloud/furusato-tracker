@@ -5,9 +5,10 @@ import { usePathname } from 'next/navigation'
 
 const NAV_ITEMS = [
   { href: '/dashboard', label: 'ダッシュボード', icon: '📊' },
-  { href: '/map', label: 'マップ', icon: '🗾' },
-  { href: '/log', label: '寄付を記録', icon: '✏️' },
-  { href: '/settings', label: '設定', icon: '⚙️' },
+  { href: '/plan',      label: 'プラン',         icon: '📋' },
+  { href: '/map',       label: 'マップ',         icon: '🗾' },
+  { href: '/log',       label: '寄付を記録',     icon: '✏️' },
+  { href: '/settings',  label: '設定',           icon: '⚙️' },
 ]
 
 export default function Sidebar() {
