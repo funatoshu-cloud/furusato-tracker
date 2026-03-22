@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { MapContainer, TileLayer, GeoJSON, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import type { Donation, DonationSite } from '@/lib/storage'
+import { DONATION_CATEGORIES, type Donation, type DonationSite, type DonationCategory } from '@/lib/storage'
 import { getPlans, type Plan } from '@/lib/plans'
 import { PREF_CODE } from '@/lib/prefectureCodes'
 
@@ -297,12 +297,13 @@ interface ModalProps {
 
 function LogDonationModal({ modal, onClose, onSave }: ModalProps) {
   const today = new Date().toISOString().slice(0, 10)
-  const [amount, setAmount]     = useState('')
-  const [date, setDate]         = useState(today)
-  const [giftItem, setGiftItem] = useState('')
-  const [site, setSite]         = useState<DonationSite>('Rakuten')
-  const [notes, setNotes]       = useState('')
-  const [saved, setSaved]       = useState(false)
+  const [amount, setAmount]       = useState('')
+  const [date, setDate]           = useState(today)
+  const [giftItem, setGiftItem]   = useState('')
+  const [category, setCategory]   = useState<DonationCategory | ''>('')
+  const [site, setSite]           = useState<DonationSite>('Rakuten')
+  const [notes, setNotes]         = useState('')
+  const [saved, setSaved]         = useState(false)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -312,6 +313,7 @@ function LogDonationModal({ modal, onClose, onSave }: ModalProps) {
       amount:       Number(amount),
       date,
       giftItem,
+      category:     category || undefined,
       site,
       notes,
     })
@@ -412,19 +414,34 @@ function LogDonationModal({ modal, onClose, onSave }: ModalProps) {
               />
             </label>
 
-            {/* site */}
-            <label style={labelStyle}>
-              <span>サイト</span>
-              <select
-                className="input"
-                value={site}
-                onChange={e => setSite(e.target.value as DonationSite)}
-              >
-                {SITES.map(s => (
-                  <option key={s} value={s}>{SITE_LABELS[s]}</option>
-                ))}
-              </select>
-            </label>
+            {/* category + site — side by side */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <label style={labelStyle}>
+                <span>カテゴリ</span>
+                <select
+                  className="input"
+                  value={category}
+                  onChange={e => setCategory(e.target.value as DonationCategory | '')}
+                >
+                  <option value="">選択（任意）</option>
+                  {DONATION_CATEGORIES.map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={labelStyle}>
+                <span>サイト</span>
+                <select
+                  className="input"
+                  value={site}
+                  onChange={e => setSite(e.target.value as DonationSite)}
+                >
+                  {SITES.map(s => (
+                    <option key={s} value={s}>{SITE_LABELS[s]}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
 
             {/* notes */}
             <label style={labelStyle}>
