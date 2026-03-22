@@ -25,6 +25,8 @@ export interface Donation {
   category?: DonationCategory  // 返礼品カテゴリ（任意）
   site: DonationSite
   notes: string
+  giftReceived?: boolean         // 返礼品受取済み
+  certificateReceived?: boolean  // 寄附金受領証明書受取済み
 }
 
 const STORAGE_KEY = 'furusato_donations'

@@ -7,7 +7,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   PieChart, Pie, Cell, Legend,
 } from 'recharts'
-import { getDonations, DONATION_CATEGORIES, type Donation, type DonationSite } from '@/lib/storage'
+import { getDonations, updateDonation, DONATION_CATEGORIES, type Donation, type DonationSite } from '@/lib/storage'
 import { getPlans, type Plan } from '@/lib/plans'
 import { loadTaxSettings, calculate } from '@/lib/calculator'
 import { PREFECTURES } from '@/lib/prefectures'
@@ -200,6 +200,15 @@ export default function DashboardPage() {
     () => new Set(donations.map(d => d.prefecture)),   // all-time coverage
     [donations],
   )
+
+  function handleToggle(id: string, field: 'giftReceived' | 'certificateReceived') {
+    setDonations(prev => {
+      const next = prev.map(d => d.id === id ? { ...d, [field]: !d[field] } : d)
+      const updated = next.find(d => d.id === id)
+      if (updated) updateDonation(updated)
+      return next
+    })
+  }
 
   function toggleSort(field: SortField) {
     if (sortField === field) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
@@ -471,6 +480,12 @@ export default function DashboardPage() {
                   <th className="px-4 py-3 text-left font-medium">自治体</th>
                   <th className="px-4 py-3 text-left font-medium">返礼品</th>
                   <th className="px-4 py-3 text-left font-medium">サイト</th>
+                  <th className="px-3 py-3 text-center font-medium leading-tight whitespace-nowrap" title="返礼品を受け取った">
+                    返礼品<br/>受取
+                  </th>
+                  <th className="px-3 py-3 text-center font-medium leading-tight whitespace-nowrap" title="寄附金受領証明書を受け取った">
+                    証明書<br/>受取
+                  </th>
                   <SortTh label="金額"   field="amount" current={sortField} dir={sortDir} onToggle={toggleSort} right />
                 </tr>
               </thead>
@@ -492,6 +507,20 @@ export default function DashboardPage() {
                     <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
                       {SITE_LABELS[d.site] ?? d.site}
                     </td>
+                    <td className="px-3 py-3 text-center">
+                      <CheckButton
+                        checked={d.giftReceived ?? false}
+                        onChange={() => handleToggle(d.id, 'giftReceived')}
+                        title={d.giftReceived ? '受取済み' : '未受取'}
+                      />
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      <CheckButton
+                        checked={d.certificateReceived ?? false}
+                        onChange={() => handleToggle(d.id, 'certificateReceived')}
+                        title={d.certificateReceived ? '受取済み' : '未受取'}
+                      />
+                    </td>
                     <td className="px-4 py-3 text-right font-semibold text-gray-900 tabular-nums whitespace-nowrap">
                       {yen(d.amount)}
                     </td>
@@ -500,7 +529,7 @@ export default function DashboardPage() {
               </tbody>
               <tfoot>
                 <tr className="bg-gray-50 border-t border-gray-100 text-xs font-semibold text-gray-600">
-                  <td colSpan={4} className="px-4 py-3">合計</td>
+                  <td colSpan={6} className="px-4 py-3">合計</td>
                   <td className="px-4 py-3 text-right tabular-nums text-gray-900">
                     {yen(totalThisYear)}
                   </td>
@@ -515,6 +544,29 @@ export default function DashboardPage() {
 }
 
 // ── sub-components ────────────────────────────────────────────────────────────
+
+function CheckButton({ checked, onChange, title }: {
+  checked: boolean
+  onChange: () => void
+  title: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onChange}
+      title={title}
+      className={`w-6 h-6 rounded-full border-2 flex items-center justify-center mx-auto transition-all duration-150 ${
+        checked
+          ? 'bg-green-500 border-green-500 text-white hover:bg-green-600'
+          : 'border-gray-200 text-transparent hover:border-green-300'
+      }`}
+    >
+      <svg viewBox="0 0 12 10" width="10" height="8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="1,5 4,8 11,1" />
+      </svg>
+    </button>
+  )
+}
 
 function StatCard({
   label,
