@@ -73,10 +73,7 @@ export function MunicipalitySelect({
         </label>
         <select
           value={prefecture}
-          onChange={e => {
-            onPrefectureChange(e.target.value)
-            onMunicipalityChange('')
-          }}
+          onChange={e => onPrefectureChange(e.target.value)}
           className="input"
           required={req}
         >

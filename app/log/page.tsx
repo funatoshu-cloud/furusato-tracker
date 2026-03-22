@@ -217,8 +217,8 @@ function ManualTab({
       <MunicipalitySelect
         prefecture={form.prefecture}
         municipality={form.municipality}
-        onPrefectureChange={pref => setForm({ ...form, prefecture: pref, municipality: '' })}
-        onMunicipalityChange={muni => setForm({ ...form, municipality: muni })}
+        onPrefectureChange={pref => setForm(f => ({ ...f, prefecture: pref, municipality: '' }))}
+        onMunicipalityChange={muni => setForm(f => ({ ...f, municipality: muni }))}
         required
       />
 
