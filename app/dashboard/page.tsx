@@ -7,9 +7,10 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   PieChart, Pie, Cell, Legend,
 } from 'recharts'
-import { getDonations, type Donation, type DonationSite } from '@/lib/storage'
+import { getDonations, DONATION_CATEGORIES, type Donation, type DonationSite } from '@/lib/storage'
 import { getPlans, type Plan } from '@/lib/plans'
 import { loadTaxSettings, calculate } from '@/lib/calculator'
+import { PREFECTURES } from '@/lib/prefectures'
 import { yen } from '@/lib/format'
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -26,6 +27,24 @@ const SITE_LABELS: Record<DonationSite, string> = {
 const MONTHS = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月']
 
 const PIE_COLORS = ['#16a34a', '#2563eb', '#f59e0b', '#94a3b8']
+
+const CATEGORY_COLORS = [
+  '#16a34a', '#2563eb', '#f59e0b', '#ef4444',
+  '#8b5cf6', '#06b6d4', '#f97316', '#84cc16', '#e879f9', '#64748b',
+]
+
+const CATEGORY_EMOJI: Record<string, string> = {
+  '肉類':         '🥩',
+  '魚介類':       '🐟',
+  '野菜・果物':   '🍎',
+  '米・穀物':     '🌾',
+  '乳製品・加工食品': '🧀',
+  '飲料・お酒':   '🍶',
+  '日用品・雑貨': '🧴',
+  '工芸品・アート': '🎨',
+  '体験・旅行':   '✈️',
+  'その他':       '📦',
+}
 
 type SortField = 'date' | 'amount'
 type SortDir   = 'asc'  | 'desc'
@@ -120,6 +139,68 @@ export default function DashboardPage() {
     [yearPlans],
   )
 
+  // ── year-over-year ──────────────────────────────────────────────────────────
+
+  // For YoY: "current" = selectedYear (or CURRENT_YEAR when 'all'), "previous" = one year before
+  const yoyCurYear  = selectedYear === 'all' ? CURRENT_YEAR : (selectedYear as number)
+  const yoyPrevYear = yoyCurYear - 1
+
+  const prevYearDonations = useMemo(
+    () => donations.filter(d => d.date.startsWith(String(yoyPrevYear))),
+    [donations, yoyPrevYear],
+  )
+
+  const prevYearTotal = useMemo(
+    () => prevYearDonations.reduce((s, d) => s + d.amount, 0),
+    [prevYearDonations],
+  )
+
+  // Current-year slice — when 'all' is selected use CURRENT_YEAR for YoY comparison
+  const yoyCurrentDonations = selectedYear === 'all'
+    ? donations.filter(d => d.date.startsWith(String(CURRENT_YEAR)))
+    : thisYear
+
+  const yoyCurrentTotal = useMemo(
+    () => yoyCurrentDonations.reduce((s, d) => s + d.amount, 0),
+    [yoyCurrentDonations],
+  )
+
+  const yoyDelta = yoyCurrentTotal - prevYearTotal
+  const yoyPct   = prevYearTotal > 0 ? Math.round(Math.abs(yoyDelta) / prevYearTotal * 100) : null
+
+  const yoyData = useMemo(() => {
+    const cur  = Array<number>(12).fill(0)
+    const prev = Array<number>(12).fill(0)
+    for (const d of yoyCurrentDonations) cur[Number(d.date.slice(5, 7)) - 1]  += d.amount
+    for (const d of prevYearDonations)   prev[Number(d.date.slice(5, 7)) - 1] += d.amount
+    return MONTHS.map((month, i) => ({ month, cur: cur[i], prev: prev[i] }))
+  }, [yoyCurrentDonations, prevYearDonations])
+
+  const hasLastYear = prevYearTotal > 0
+
+  // ── category breakdown ───────────────────────────────────────────────────────
+
+  const categoryData = useMemo(() => {
+    const sums: Record<string, number> = {}
+    for (const d of thisYear) {
+      const cat = d.category ?? 'その他'
+      sums[cat] = (sums[cat] ?? 0) + d.amount
+    }
+    return Object.entries(sums)
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, value]) => ({ name, value }))
+  }, [thisYear])
+
+  const hasCategoryData = categoryData.length > 0 &&
+    thisYear.some(d => d.category)   // only show chart if at least one donation has a category
+
+  // ── prefecture coverage ──────────────────────────────────────────────────────
+
+  const donatedPrefs = useMemo(
+    () => new Set(donations.map(d => d.prefecture)),   // all-time coverage
+    [donations],
+  )
+
   function toggleSort(field: SortField) {
     if (sortField === field) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     else { setSortField(field); setSortDir('desc') }
@@ -209,50 +290,55 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* ── charts row ── */}
+      {/* ── charts row 1: YoY bar + site pie ── */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* monthly bar chart — 2/3 */}
+
+        {/* year-over-year monthly bar — 2/3 */}
         <section className="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-5">
-          <h3 className="text-sm font-semibold text-gray-700 mb-4">
-            月別寄付額（{yearLabel(selectedYear)}）
-          </h3>
-          {thisYear.length === 0 ? (
+          <div className="flex items-start justify-between mb-1 flex-wrap gap-2">
+            <h3 className="text-sm font-semibold text-gray-700">
+              月別比較（{yoyCurYear}年 vs {yoyPrevYear}年）
+            </h3>
+            {hasLastYear && (
+              <p className="text-xs text-gray-500 shrink-0">
+                前年比&nbsp;
+                <span className={yoyDelta >= 0 ? 'text-green-600 font-semibold' : 'text-red-500 font-semibold'}>
+                  {yoyDelta >= 0 ? '+' : ''}{yen(yoyDelta)}
+                  {yoyPct !== null ? `（${yoyDelta >= 0 ? '+' : '-'}${yoyPct}%）` : ''}
+                </span>
+              </p>
+            )}
+          </div>
+          {yoyCurrentDonations.length === 0 && prevYearDonations.length === 0 ? (
             <ChartEmpty />
           ) : (
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={monthlyData} margin={{ top: 4, right: 4, left: 8, bottom: 0 }}>
+              <BarChart data={yoyData} margin={{ top: 8, right: 4, left: 8, bottom: 0 }} barCategoryGap="30%">
                 <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" vertical={false} />
-                <XAxis
-                  dataKey="month"
-                  tick={{ fontSize: 11, fill: '#9ca3af' }}
-                  axisLine={false}
-                  tickLine={false}
-                />
+                <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
                 <YAxis
                   tick={{ fontSize: 11, fill: '#9ca3af' }}
-                  axisLine={false}
-                  tickLine={false}
+                  axisLine={false} tickLine={false} width={42}
                   tickFormatter={(v: number) =>
-                    v === 0 ? '0' : v >= 10_000 ? `${v / 10_000}万` : `${v / 1_000}k`
-                  }
-                  width={42}
+                    v === 0 ? '0' : v >= 10_000 ? `${v / 10_000}万` : `${v / 1_000}k`}
                 />
                 <Tooltip
-                  formatter={(v) => [`¥${Number(v).toLocaleString()}`, '寄付額']}
-                  contentStyle={{
-                    borderRadius: 8,
-                    border: '1px solid #e5e7eb',
-                    fontSize: 12,
-                  }}
+                  formatter={(v, name) => [`¥${Number(v).toLocaleString()}`, name === 'cur' ? `${yoyCurYear}年` : `${yoyPrevYear}年`]}
+                  contentStyle={{ borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12 }}
                   cursor={{ fill: '#f9fafb' }}
                 />
-                <Bar dataKey="amount" fill="#16a34a" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                <Legend
+                  formatter={name => name === 'cur' ? `${yoyCurYear}年` : `${yoyPrevYear}年`}
+                  iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 4 }}
+                />
+                <Bar dataKey="cur"  fill="#16a34a" radius={[3, 3, 0, 0]} maxBarSize={18} />
+                <Bar dataKey="prev" fill="#bbf7d0" radius={[3, 3, 0, 0]} maxBarSize={18} />
               </BarChart>
             </ResponsiveContainer>
           )}
         </section>
 
-        {/* pie chart — 1/3 */}
+        {/* site pie — 1/3 */}
         <section className="bg-white rounded-xl border border-gray-200 p-5">
           <h3 className="text-sm font-semibold text-gray-700 mb-4">サイト別内訳</h3>
           {siteData.length === 0 ? (
@@ -260,34 +346,102 @@ export default function DashboardPage() {
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <PieChart>
-                <Pie
-                  data={siteData}
-                  cx="50%"
-                  cy="42%"
-                  innerRadius={52}
-                  outerRadius={78}
-                  paddingAngle={2}
-                  dataKey="value"
-                >
-                  {siteData.map((_, i) => (
-                    <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-                  ))}
+                <Pie data={siteData} cx="50%" cy="42%" innerRadius={52} outerRadius={78} paddingAngle={2} dataKey="value">
+                  {siteData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                </Pie>
+                <Tooltip formatter={(v) => [`¥${Number(v).toLocaleString()}`]} contentStyle={{ borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12 }} />
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </section>
+      </div>
+
+      {/* ── charts row 2: category pie + prefecture coverage ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        {/* category pie — 1/3 */}
+        <section className="bg-white rounded-xl border border-gray-200 p-5">
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">カテゴリ別内訳</h3>
+          {!hasCategoryData ? (
+            <div className="h-[220px] flex flex-col items-center justify-center gap-2">
+              <p className="text-sm text-gray-300 select-none">カテゴリ未設定</p>
+              <Link href="/log" className="text-xs text-green-600 hover:underline">
+                寄付を記録してカテゴリを設定 →
+              </Link>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie data={categoryData} cx="50%" cy="42%" innerRadius={48} outerRadius={74} paddingAngle={2} dataKey="value">
+                  {categoryData.map((entry, i) => <Cell key={i} fill={CATEGORY_COLORS[i % CATEGORY_COLORS.length]} />)}
                 </Pie>
                 <Tooltip
-                  formatter={(v) => [`¥${Number(v).toLocaleString()}`]}
-                  contentStyle={{
-                    borderRadius: 8,
-                    border: '1px solid #e5e7eb',
-                    fontSize: 12,
-                  }}
+                  formatter={(v, _n, props) => [
+                    `¥${Number(v).toLocaleString()}`,
+                    `${CATEGORY_EMOJI[props.payload?.name] ?? ''} ${props.payload?.name}`,
+                  ]}
+                  contentStyle={{ borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12 }}
                 />
                 <Legend
-                  iconType="circle"
-                  iconSize={8}
-                  wrapperStyle={{ fontSize: 11, paddingTop: 4 }}
+                  formatter={name => `${CATEGORY_EMOJI[name] ?? ''} ${name}`}
+                  iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 10, paddingTop: 4 }}
                 />
               </PieChart>
             </ResponsiveContainer>
+          )}
+        </section>
+
+        {/* prefecture coverage — 2/3 */}
+        <section className="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-gray-700">都道府県カバー率</h3>
+            <div className="text-right">
+              <span className="text-xl font-bold text-green-700">{donatedPrefs.size}</span>
+              <span className="text-sm text-gray-400"> / {PREFECTURES.length}</span>
+              {donatedPrefs.size > 0 && (
+                <span className="ml-2 text-xs text-gray-400">
+                  ({Math.round(donatedPrefs.size / PREFECTURES.length * 100)}%)
+                </span>
+              )}
+            </div>
+          </div>
+          {/* progress bar */}
+          <div className="w-full bg-gray-100 rounded-full h-2 mb-4">
+            <div
+              className="bg-green-500 h-2 rounded-full transition-all duration-500"
+              style={{ width: `${donatedPrefs.size / PREFECTURES.length * 100}%` }}
+            />
+          </div>
+          {donatedPrefs.size === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-4">
+              寄付を記録すると、訪問した都道府県がここに表示されます
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {PREFECTURES.map(pref => {
+                const short = pref.endsWith('道') ? pref : pref.slice(0, -1)
+                const donated = donatedPrefs.has(pref)
+                return (
+                  <span
+                    key={pref}
+                    title={pref}
+                    className={`text-[11px] px-2 py-0.5 rounded-full font-medium select-none transition-colors ${
+                      donated
+                        ? 'bg-green-100 text-green-800 ring-1 ring-green-200'
+                        : 'bg-gray-100 text-gray-400'
+                    }`}
+                  >
+                    {short}
+                  </span>
+                )
+              })}
+            </div>
+          )}
+          {donatedPrefs.size === PREFECTURES.length && (
+            <p className="text-xs text-green-600 font-semibold mt-3 text-center">
+              🎉 全47都道府県制覇！
+            </p>
           )}
         </section>
       </div>
@@ -327,8 +481,13 @@ export default function DashboardPage() {
                     <td className="px-4 py-3 text-gray-800 whitespace-nowrap">
                       {d.prefecture}&nbsp;{d.municipality}
                     </td>
-                    <td className="px-4 py-3 text-gray-600 max-w-[180px] truncate" title={d.giftItem}>
-                      {d.giftItem}
+                    <td className="px-4 py-3 text-gray-600 max-w-[200px]">
+                      <span className="truncate block" title={d.giftItem}>{d.giftItem}</span>
+                      {d.category && (
+                        <span className="inline-block mt-0.5 text-[10px] px-1.5 py-px rounded-full bg-green-50 text-green-700 font-medium">
+                          {CATEGORY_EMOJI[d.category]} {d.category}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
                       {SITE_LABELS[d.site] ?? d.site}

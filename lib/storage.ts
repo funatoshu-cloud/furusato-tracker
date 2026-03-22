@@ -1,12 +1,28 @@
 export type DonationSite = 'Rakuten' | 'Satofull' | 'Choice' | 'Other'
 
+export const DONATION_CATEGORIES = [
+  '肉類',
+  '魚介類',
+  '野菜・果物',
+  '米・穀物',
+  '乳製品・加工食品',
+  '飲料・お酒',
+  '日用品・雑貨',
+  '工芸品・アート',
+  '体験・旅行',
+  'その他',
+] as const
+
+export type DonationCategory = typeof DONATION_CATEGORIES[number]
+
 export interface Donation {
   id: string
-  municipality: string  // 市区町村
-  prefecture: string    // 都道府県
-  amount: number        // 円
-  date: string          // YYYY-MM-DD
-  giftItem: string      // 返礼品名
+  municipality: string   // 市区町村
+  prefecture: string     // 都道府県
+  amount: number         // 円
+  date: string           // YYYY-MM-DD
+  giftItem: string       // 返礼品名
+  category?: DonationCategory  // 返礼品カテゴリ（任意）
   site: DonationSite
   notes: string
 }

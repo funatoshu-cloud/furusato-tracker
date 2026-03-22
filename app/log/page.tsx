@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import {
   getDonations, addDonation, deleteDonation,
-  type Donation, type DonationSite,
+  DONATION_CATEGORIES, type Donation, type DonationSite, type DonationCategory,
 } from '@/lib/storage'
 import { getPlans, updatePlan, type Plan } from '@/lib/plans'
 import { loadTaxSettings, calculate } from '@/lib/calculator'
@@ -25,10 +25,10 @@ const SITE_LABELS: Record<DonationSite, string> = {
 const CURRENT_YEAR = new Date().getFullYear()
 const TODAY = new Date().toISOString().slice(0, 10)
 
-const CSV_HEADERS = 'prefecture,municipality,amount,date,giftItem,site,notes'
+const CSV_HEADERS = 'prefecture,municipality,amount,date,giftItem,site,notes,category'
 const CSV_TEMPLATE = [
   CSV_HEADERS,
-  '北海道,余市町,10000,2025-01-15,余市産リンゴ 5kg,Rakuten,',
+  '北海道,余市町,10000,2025-01-15,余市産リンゴ 5kg,Rakuten,,野菜・果物',
 ].join('\n')
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -49,6 +49,7 @@ interface ParsedCsvRow {
   giftItem: string
   site: string
   notes: string
+  category: string
   errors: string[]
 }
 
@@ -79,7 +80,7 @@ function parseCsvRows(text: string): ParsedCsvRow[] {
   return (isHeader ? raw.slice(1) : raw)
     .filter(r => r.some(c => c.trim()))
     .map(r => {
-      const [prefecture = '', municipality = '', amount = '', date = '', giftItem = '', site = '', notes = ''] = r
+      const [prefecture = '', municipality = '', amount = '', date = '', giftItem = '', site = '', notes = '', category = ''] = r
       const errors: string[] = []
       const pref = prefecture.trim()
       const muni = municipality.trim()
@@ -90,7 +91,7 @@ function parseCsvRows(text: string): ParsedCsvRow[] {
       if (pref && muni && (MUNICIPALITIES[pref] ?? []).length > 0 && !(MUNICIPALITIES[pref] ?? []).includes(muni)) {
         errors.push('市区町村が見つかりません — スペルを確認してください')
       }
-      return { prefecture, municipality, amount, date, giftItem, site, notes, errors }
+      return { prefecture, municipality, amount, date, giftItem, site, notes, category, errors }
     })
 }
 
@@ -130,6 +131,7 @@ function ManualTab({
     amount: '',
     date: TODAY,
     giftItem: '',
+    category: '' as DonationCategory | '',
     site: 'Rakuten' as DonationSite,
     notes: '',
   }
@@ -165,6 +167,7 @@ function ManualTab({
       amount:       Number(form.amount),
       date:         form.date,
       giftItem:     form.giftItem,
+      category:     form.category || undefined,
       site:         form.site,
       notes:        form.notes,
     }])
@@ -248,13 +251,22 @@ function ManualTab({
           onChange={e => setForm({ ...form, giftItem: e.target.value })} required />
       </Field>
 
-      {/* サイト */}
-      <Field label="サイト">
-        <select className="input" value={form.site}
-          onChange={e => setForm({ ...form, site: e.target.value as DonationSite })}>
-          {SITES.map(s => <option key={s} value={s}>{SITE_LABELS[s]}</option>)}
-        </select>
-      </Field>
+      {/* カテゴリ + サイト */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Field label="カテゴリ">
+          <select className="input" value={form.category}
+            onChange={e => setForm(f => ({ ...f, category: e.target.value as DonationCategory | '' }))}>
+            <option value="">カテゴリを選択（任意）</option>
+            {DONATION_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Field>
+        <Field label="サイト">
+          <select className="input" value={form.site}
+            onChange={e => setForm(f => ({ ...f, site: e.target.value as DonationSite }))}>
+            {SITES.map(s => <option key={s} value={s}>{SITE_LABELS[s]}</option>)}
+          </select>
+        </Field>
+      </div>
 
       {/* メモ */}
       <Field label="メモ">
@@ -277,11 +289,11 @@ function ManualTab({
 
 interface BulkRow {
   prefecture: string; municipality: string; amount: string
-  date: string; giftItem: string; site: DonationSite | ''
+  date: string; giftItem: string; category: DonationCategory | ''; site: DonationSite | ''
 }
 
 const EMPTY_BULK_ROW: BulkRow = {
-  prefecture: '', municipality: '', amount: '', date: '', giftItem: '', site: '',
+  prefecture: '', municipality: '', amount: '', date: '', giftItem: '', category: '', site: '',
 }
 
 function makeBulkRows(n: number): BulkRow[] {
@@ -306,6 +318,7 @@ function BulkTab({ onSave }: { onSave: AddFn }) {
       amount:       Number(r.amount),
       date:         r.date || TODAY,
       giftItem:     r.giftItem || '（未入力）',
+      category:     r.category || undefined,
       site:         (r.site || 'Rakuten') as DonationSite,
       notes:        '',
     })))
@@ -329,6 +342,7 @@ function BulkTab({ onSave }: { onSave: AddFn }) {
               <th className={thCls}>金額（円） <span className="text-red-400">*</span></th>
               <th className={thCls}>寄付日</th>
               <th className={thCls}>返礼品名</th>
+              <th className={thCls}>カテゴリ</th>
               <th className={thCls}>サイト</th>
             </tr>
           </thead>
@@ -362,6 +376,13 @@ function BulkTab({ onSave }: { onSave: AddFn }) {
                 <td className={tdCls}>
                   <input className="input text-xs py-1 w-36" placeholder="返礼品名"
                     value={row.giftItem} onChange={e => setRow(i, { giftItem: e.target.value })} />
+                </td>
+                <td className={tdCls}>
+                  <select className="input text-xs py-1 w-28" value={row.category}
+                    onChange={e => setRow(i, { category: e.target.value as DonationCategory | '' })}>
+                    <option value="">—</option>
+                    {DONATION_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
                 </td>
                 <td className={tdCls}>
                   <select className="input text-xs py-1" value={row.site}
@@ -432,6 +453,9 @@ function CsvTab({ onSave }: { onSave: AddFn }) {
       amount:       Number(r.amount),
       date:         r.date || TODAY,
       giftItem:     r.giftItem || '（未入力）',
+      category:     (DONATION_CATEGORIES as readonly string[]).includes(r.category)
+                      ? r.category as DonationCategory
+                      : undefined,
       site:         (SITES.includes(r.site as DonationSite) ? r.site : 'Rakuten') as DonationSite,
       notes:        r.notes,
     })))
