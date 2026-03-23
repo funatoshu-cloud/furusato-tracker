@@ -22,7 +22,7 @@ export default function MapPage() {
     <div className="flex flex-col h-screen">
       <div className="px-4 sm:px-8 py-4 sm:py-5 bg-white border-b border-gray-200">
         <h2 className="text-2xl font-bold text-gray-900">マップ</h2>
-        <p className="text-sm text-gray-500 mt-0.5">寄付した自治体を地図で確認できます</p>
+        <p className="text-sm text-gray-500 mt-0.5">寄付を記録、または返礼品を発見しましょう</p>
       </div>
       <div className="flex-1">
         <DonationMap donations={donations} onAddDonation={handleAddDonation} />

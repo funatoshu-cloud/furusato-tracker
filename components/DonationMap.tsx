@@ -7,7 +7,10 @@ import 'leaflet/dist/leaflet.css'
 import { DONATION_CATEGORIES, type Donation, type DonationSite, type DonationCategory } from '@/lib/storage'
 import { getPlans, addPlan, type Plan, type PlanSite } from '@/lib/plans'
 import { PREF_CODE } from '@/lib/prefectureCodes'
-import { getMuniGifts, getPrefGiftMunis, ALL_GIFT_PREFS, type GiftItem } from '@/lib/giftCatalog'
+import {
+  getMuniGifts, getPrefGiftMunis, getPrefDiscoverMuniCount,
+  ALL_GIFT_PREFS, CATALOG_CATEGORIES, type GiftItem,
+} from '@/lib/giftCatalog'
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -59,6 +62,18 @@ const PREF_CATALOG_COLOR = '#fde68a'  // amber-200  — prefecture with catalog,
 
 const PLAN_SITES: PlanSite[] = ['Rakuten', 'Satofull', 'Choice']
 const CURRENT_YEAR = new Date().getFullYear()
+
+// ── discover-mode color scale (amber intensity, by item / municipality count) ──
+
+function discoverCountToColor(count: number): string {
+  if (count <= 0) return '#f3f4f6'  // gray — nothing to explore here
+  if (count === 1) return '#fef3c7'  // amber-100
+  if (count === 2) return '#fde68a'  // amber-200
+  if (count === 3) return '#fcd34d'  // amber-300
+  return '#f59e0b'                    // amber-500  (4+)
+}
+
+type MapMode = 'mine' | 'discover'
 
 // ── site config for modal ─────────────────────────────────────────────────────
 
@@ -234,9 +249,49 @@ function buildPrefPopupHtml(
 
 // ── Legend overlay (React, not a Leaflet control) ────────────────────────────
 
-function Legend({ year, inMuniMode }: { year: number | 'all'; inMuniMode: boolean }) {
+function Legend({
+  year, inMuniMode, mapMode,
+}: {
+  year: number | 'all'; inMuniMode: boolean; mapMode: MapMode
+}) {
   const yearLabel = year === 'all' ? '全年度' : `${year}年`
 
+  // ── Discover mode: amber intensity scale ──────────────────────────
+  if (mapMode === 'discover') {
+    const steps = inMuniMode
+      ? [
+          { label: '情報なし', color: '#f3f4f6' },
+          { label: '1件',     color: '#fef3c7' },
+          { label: '2件',     color: '#fde68a' },
+          { label: '3+件',    color: '#fcd34d' },
+        ]
+      : [
+          { label: '情報なし',  color: '#f3f4f6' },
+          { label: '1自治体',  color: '#fef3c7' },
+          { label: '2自治体',  color: '#fde68a' },
+          { label: '3+自治体', color: '#fcd34d' },
+        ]
+    return (
+      <div style={{
+        position: 'absolute', bottom: 24, right: 10, zIndex: 1000,
+        background: 'white', padding: '10px 12px', borderRadius: 8,
+        boxShadow: '0 1px 4px rgba(0,0,0,.18)',
+        fontFamily: 'system-ui,-apple-system,sans-serif', pointerEvents: 'none',
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#b45309', marginBottom: 6 }}>
+          🎁 返礼品情報
+        </div>
+        {steps.map(({ label, color }) => (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
+            <div style={{ width: 14, height: 14, borderRadius: 3, background: color, border: '1px solid rgba(0,0,0,.1)', flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: '#6b7280' }}>{label}</span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  // ── My-records mode ───────────────────────────────────────────────
   const muniSteps = [
     { label: '未寄付',      color: MUNI_FILL },
     { label: '返礼品あり',  color: MUNI_FILL_CATALOG },
@@ -748,9 +803,13 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
   const [muniGeoReady, setMuniGeoReady]     = useState<string | null>(null)
   const [muniLoadState, setMuniLoadState]   = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
 
-  // Year filter
+  // Year filter (my-records mode)
   const CURRENT_YEAR = new Date().getFullYear()
   const [selectedYear, setSelectedYear] = useState<number | 'all'>(CURRENT_YEAR)
+
+  // Map mode + discover category filter
+  const [mapMode,        setMapMode]        = useState<MapMode>('mine')
+  const [filterCategory, setFilterCategory] = useState<DonationCategory | 'all'>('all')
 
   // Plans
   const [plans, setPlans] = useState<Plan[]>([])
@@ -835,19 +894,38 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
     ...Object.values(byPrefecture).map((ds) => ds.reduce((s, d) => s + d.amount, 0)),
   )
 
-  // Key includes selectedPref + selectedYear + plan count so layer remounts with fresh closures on change
+  // Key includes mode, category, selectedPref, year, and plan count — any change remounts for fresh closures
   const activePlanCount = plans.filter(p => p.status === 'planned').length
-  const geoKey = `pref:${selectedPref ?? '_'}:year:${selectedYear}:ap:${activePlanCount}|` + Object.entries(byPrefecture)
-    .map(([p, ds]) => `${p}:${ds.reduce((s, d) => s + d.amount, 0)}`)
-    .join('|')
+  const geoKey = `${mapMode}:${filterCategory}:pref:${selectedPref ?? '_'}:year:${selectedYear}:ap:${activePlanCount}|`
+    + Object.entries(byPrefecture).map(([p, ds]) => `${p}:${ds.reduce((s, d) => s + d.amount, 0)}`).join('|')
 
   // ── prefecture layer style ─────────────────────────────────────────
   function styleFeature(feature?: GeoFeature) {
-    const name = feature?.properties?.nam_ja as string | undefined
+    const name   = feature?.properties?.nam_ja as string | undefined
     const dimmed = selectedPref !== null && name !== selectedPref
 
-    // When drilled into a prefecture, drop the choropleth colour entirely so
-    // the municipality layer (blue / violet / green) reads without red competition.
+    // ── Discover mode ──────────────────────────────────────────────
+    if (mapMode === 'discover') {
+      // When drilled in, the municipality layer takes over; dim the pref layer
+      if (selectedPref !== null) {
+        return {
+          fillColor: NO_DONATION_COLOR,
+          fillOpacity: name === selectedPref ? 0.05 : PREF_DIM,
+          color: '#9ca3af',
+          weight: dimmed ? 0.5 : 0.8,
+        }
+      }
+      const count = getPrefDiscoverMuniCount(name ?? '', filterCategory)
+      return {
+        fillColor:   discoverCountToColor(count),
+        fillOpacity: 0.8,
+        color:       '#d97706',
+        weight:      0.8,
+      }
+    }
+
+    // ── My-records mode ────────────────────────────────────────────
+    // When drilled in, drop choropleth so municipality colours read clearly
     if (selectedPref !== null) {
       return {
         fillColor: NO_DONATION_COLOR,
@@ -866,12 +944,7 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
       : hasPlans   ? PREF_PLAN_COLOR
       : hasCatalog ? PREF_CATALOG_COLOR
       : NO_DONATION_COLOR
-    return {
-      fillColor,
-      fillOpacity: 0.75,
-      color: '#9ca3af',
-      weight: 0.8,
-    }
+    return { fillColor, fillOpacity: 0.75, color: '#9ca3af', weight: 0.8 }
   }
 
   // ── prefecture layer events ────────────────────────────────────────
@@ -879,6 +952,38 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
     const name = feature.properties?.nam_ja as string | undefined
     if (!name) return
 
+    const path = layer as L.Path
+
+    // ── Discover mode: catalog-count tooltip, no donation popup ──────
+    if (mapMode === 'discover') {
+      const count = getPrefDiscoverMuniCount(name, filterCategory)
+      let tipHtml = `<strong>${esc(name)}</strong>`
+      tipHtml += count > 0
+        ? `<br><span style="color:#b45309;font-size:12px;">🎁 返礼品情報 ${count}自治体</span>`
+        : `<br><span style="font-size:12px;color:#9ca3af;">返礼品情報なし</span>`
+      layer.bindTooltip(tipHtml, { sticky: true, direction: 'center' })
+      layer.on({
+        mouseover() {
+          if (!selectedPref) {
+            path.setStyle({ weight: 2, color: '#d97706', fillOpacity: 0.9 })
+            path.bringToFront()
+          }
+        },
+        mouseout() {
+          const c = getPrefDiscoverMuniCount(name, filterCategory)
+          path.setStyle({ weight: 0.8, color: '#d97706', fillOpacity: c > 0 ? 0.85 : 0.8 })
+        },
+        click() {
+          setSelectedPref(name)
+          setPrefBounds(mainLandBounds(feature))
+          setMuniLoadState('idle')
+          void loadMuniGeo(name)
+        },
+      })
+      return
+    }
+
+    // ── My-records mode: donation history tooltip + popup ────────────
     // Tooltip: prefecture name + donation count/total + plan count/total
     const tipDs    = byPrefecture[name] ?? []
     const tipPlans = (activePlansByPref[name] ?? []).filter(p => selectedYear === 'all' || p.year === selectedYear)
@@ -894,7 +999,6 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
     layer.bindTooltip(tipHtml, { sticky: true, direction: 'center' })
     layer.bindPopup(buildPrefPopupHtml(name, byPrefectureAll[name] ?? [], selectedYear, activePlansByPref[name] ?? []), { maxWidth: 300 })
 
-    const path = layer as L.Path
     const ds = byPrefecture[name] ?? []
     const total = ds.reduce((s, d) => s + d.amount, 0)
     const dimmed = selectedPref !== null && name !== selectedPref
@@ -925,8 +1029,23 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
 
   // ── municipality layer style ───────────────────────────────────────
   function styleMuniFeature(feature?: GeoFeature): L.PathOptions {
-    const props = feature?.properties ?? {}
+    const props    = feature?.properties ?? {}
     const muniName = ((props.N03_004 ?? props.N03_003) ?? '') as string
+
+    // ── Discover mode: amber scale by filtered catalog count ─────────
+    if (mapMode === 'discover') {
+      const gifts = selectedPref
+        ? getMuniGifts(selectedPref, muniName).filter(g => filterCategory === 'all' || g.category === filterCategory)
+        : []
+      return {
+        fillColor:   discoverCountToColor(gifts.length),
+        fillOpacity: gifts.length > 0 ? 0.72 : 0.2,
+        color:       gifts.length > 0 ? '#d97706' : '#e5e7eb',
+        weight:      1,
+      }
+    }
+
+    // ── My-records mode ──────────────────────────────────────────────
     const prefDons  = selectedPref ? (byPrefecture[selectedPref] ?? []) : []
     const prefPlans = selectedPref ? (activePlansByPref[selectedPref] ?? []) : []
     const hasDonation = prefDons.some(d => d.municipality === muniName)
@@ -955,21 +1074,55 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
       .reduce((s, d) => s + d.amount, 0)
     const muniPlan = prefPlans.find(p => p.municipality === muniName)
 
-    const hasDonation = muniTotal > 0
-    const hasPlan     = !!muniPlan
-    const catalogGifts = selectedPref ? getMuniGifts(selectedPref, muniName) : []
-    const hasCatalog  = catalogGifts.length > 0
+    const hasDonation   = muniTotal > 0
+    const hasPlan       = !!muniPlan
+    const allCatalogGifts = selectedPref ? getMuniGifts(selectedPref, muniName) : []
+    const hasCatalog    = allCatalogGifts.length > 0
 
-    // Tooltip
+    // ── Discover mode ──────────────────────────────────────────────
+    if (mapMode === 'discover') {
+      const filteredGifts = filterCategory === 'all'
+        ? allCatalogGifts
+        : allCatalogGifts.filter(g => g.category === filterCategory)
+      const hasFiltered = filteredGifts.length > 0
+
+      let tipHtml = esc(muniName)
+      if (hasFiltered) {
+        tipHtml += `<br><span style="color:#b45309;font-size:12px;">🎁 ${filteredGifts.length}件の返礼品</span>`
+      } else {
+        tipHtml += `<br><span style="font-size:11px;color:#d1d5db;">返礼品情報なし</span>`
+      }
+      layer.bindTooltip(tipHtml, { sticky: true, direction: 'top' })
+
+      const restoreOpacity = hasFiltered ? 0.72 : 0.2
+      const strokeColor    = hasFiltered ? '#d97706' : '#e5e7eb'
+      layer.on({
+        mouseover() {
+          path.setStyle({ weight: 2.5, color: hasFiltered ? '#d97706' : '#9ca3af', fillOpacity: 0.9 })
+          path.bringToFront()
+        },
+        mouseout() {
+          path.setStyle({ weight: 1, color: strokeColor, fillOpacity: restoreOpacity })
+        },
+        click() {
+          // Open the modal (gifts tab first) only when this municipality has catalog data
+          if (selectedPref && hasFiltered) {
+            setLogModal({ prefecture: selectedPref, municipality: muniName })
+          }
+        },
+      })
+      return
+    }
+
+    // ── My-records mode ────────────────────────────────────────────
     let tipHtml = esc(muniName)
     if (hasDonation)  tipHtml += `<br><span style="color:#16a34a;font-weight:700;">寄付 ¥${muniTotal.toLocaleString()}</span>`
     if (hasPlan)      tipHtml += `<br><span style="color:#7c3aed;font-weight:600;">📋 計画 ¥${muniPlan!.plannedAmount.toLocaleString()}</span>`
-    if (hasCatalog)   tipHtml += `<br><span style="color:#b45309;font-size:12px;">🎁 返礼品 ${catalogGifts.length}件あり</span>`
+    if (hasCatalog)   tipHtml += `<br><span style="color:#b45309;font-size:12px;">🎁 返礼品 ${allCatalogGifts.length}件あり</span>`
     layer.bindTooltip(tipHtml, { sticky: true, direction: 'top' })
 
     const restoreOpacity = hasDonation ? 0.65 : hasPlan ? 0.55 : hasCatalog ? 0.5 : 0.3
     const hoverColor     = hasDonation ? MUNI_HIGHLIGHT : hasPlan ? '#7c3aed' : hasCatalog ? '#d97706' : MUNI_HIGHLIGHT
-
     layer.on({
       mouseover() {
         path.setStyle({ weight: 2.5, color: hoverColor, fillOpacity: 0.85 })
@@ -979,9 +1132,7 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
         path.setStyle({ weight: 1, color: MUNI_STROKE, fillOpacity: restoreOpacity })
       },
       click() {
-        if (selectedPref) {
-          setLogModal({ prefecture: selectedPref, municipality: muniName })
-        }
+        if (selectedPref) setLogModal({ prefecture: selectedPref, municipality: muniName })
       },
     })
   }
@@ -1047,7 +1198,7 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
         {/* Municipality layer — shown when a prefecture is selected and data is loaded */}
         {selectedPref && currentMuniData && (
           <GeoJSON
-            key={`muni-${selectedPref}-${(activePlansByPref[selectedPref] ?? []).length}`}
+            key={`muni-${mapMode}-${filterCategory}-${selectedPref}-${(activePlansByPref[selectedPref] ?? []).length}`}
             data={currentMuniData as unknown as GeoJSON.GeoJsonObject}
             style={styleMuniFeature as unknown as L.StyleFunction}
             onEachFeature={onEachMuniFeature as unknown as (f: GeoJSON.Feature, l: L.Layer) => void}
@@ -1055,10 +1206,75 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
         )}
       </MapContainer>
 
-      {/* Year selector */}
+      {/* ── Mode toggle (top-centre) ────────────────────────────────── */}
+      <div style={{
+        position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)',
+        zIndex: 999, display: 'flex',
+        background: 'white', border: '1px solid #d1d5db', borderRadius: 10,
+        boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+        fontFamily: 'system-ui,-apple-system,sans-serif',
+        overflow: 'hidden',
+      }}>
+        {([['mine', '📍 マイ記録'], ['discover', '🔍 発見する']] as const).map(([m, label]) => (
+          <button
+            key={m}
+            onClick={() => { setMapMode(m); setFilterCategory('all') }}
+            style={{
+              padding: '7px 16px',
+              fontSize: 13, fontWeight: 600,
+              border: 'none', cursor: 'pointer',
+              background: mapMode === m
+                ? m === 'discover' ? '#f59e0b' : '#16a34a'
+                : 'white',
+              color: mapMode === m ? 'white' : '#6b7280',
+              transition: 'background 0.15s, color 0.15s',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Category filter strip (discover mode only) ───────────────── */}
+      {mapMode === 'discover' && (
+        <div style={{
+          position: 'absolute', top: 54, left: 0, right: 0, zIndex: 998,
+          display: 'flex', gap: 6, alignItems: 'center',
+          padding: '6px 12px',
+          background: 'rgba(255,255,255,0.92)',
+          backdropFilter: 'blur(4px)',
+          borderBottom: '1px solid #fde68a',
+          overflowX: 'auto',
+          fontFamily: 'system-ui,-apple-system,sans-serif',
+        }}>
+          {(['all', ...CATALOG_CATEGORIES] as const).map(cat => {
+            const active = filterCategory === cat
+            const label  = cat === 'all' ? 'すべて' : `${CAT_EMOJI[cat] ?? ''} ${cat}`
+            return (
+              <button
+                key={cat}
+                onClick={() => setFilterCategory(cat as DonationCategory | 'all')}
+                style={{
+                  padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600,
+                  whiteSpace: 'nowrap', cursor: 'pointer', flexShrink: 0,
+                  border: active ? '1px solid #d97706' : '1px solid #e5e7eb',
+                  background: active ? '#f59e0b' : 'white',
+                  color: active ? 'white' : '#374151',
+                  transition: 'background 0.12s, color 0.12s',
+                }}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Year selector (my-records mode only) */}
       <div style={{
         position: 'absolute', top: 10, right: 10, zIndex: 999,
-        display: 'flex', alignItems: 'center', gap: 6,
+        display: mapMode === 'discover' ? 'none' : 'flex',
+        alignItems: 'center', gap: 6,
         background: 'white',
         border: '1px solid #d1d5db',
         borderRadius: 8,
@@ -1113,7 +1329,7 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
       {/* Municipality loading / error banner */}
       {muniLoadState === 'loading' && (
         <div style={{
-          position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)',
+          position: 'absolute', top: 54, left: '50%', transform: 'translateX(-50%)',
           zIndex: 999,
           background: 'white',
           border: '1px solid #d1d5db',
@@ -1130,7 +1346,7 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
       )}
       {muniLoadState === 'error' && (
         <div style={{
-          position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)',
+          position: 'absolute', top: 54, left: '50%', transform: 'translateX(-50%)',
           zIndex: 999,
           background: '#fef2f2',
           border: '1px solid #fecaca',
@@ -1146,7 +1362,7 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
         </div>
       )}
 
-      <Legend year={selectedYear} inMuniMode={!!selectedPref} />
+      <Legend year={selectedYear} inMuniMode={!!selectedPref} mapMode={mapMode} />
 
       {/* Municipality action modal (donation or plan) */}
       {logModal && (

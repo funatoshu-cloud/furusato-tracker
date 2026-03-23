@@ -10,7 +10,7 @@
  * individual product pages are updated.
  */
 
-import type { DonationCategory } from './storage'
+import { DONATION_CATEGORIES, type DonationCategory } from './storage'
 
 export interface GiftItem {
   id: string
@@ -298,3 +298,25 @@ export function getPrefGiftMunis(prefecture: string): Set<string> {
 export const ALL_GIFT_PREFS: ReadonlySet<string> = new Set(
   GIFT_CATALOG.map(g => g.prefecture),
 )
+
+/**
+ * Number of distinct municipalities in a prefecture that have catalog entries,
+ * optionally filtered by category. Used for discover-mode color intensity.
+ */
+export function getPrefDiscoverMuniCount(
+  prefecture: string,
+  category: DonationCategory | 'all',
+): number {
+  return new Set(
+    GIFT_CATALOG
+      .filter(g => g.prefecture === prefecture && (category === 'all' || g.category === category))
+      .map(g => g.municipality),
+  ).size
+}
+
+/**
+ * Categories present in the catalog, in canonical DONATION_CATEGORIES order.
+ * Used to populate the discover-mode category filter bar.
+ */
+export const CATALOG_CATEGORIES: ReadonlyArray<DonationCategory> =
+  DONATION_CATEGORIES.filter(cat => GIFT_CATALOG.some(g => g.category === cat))
