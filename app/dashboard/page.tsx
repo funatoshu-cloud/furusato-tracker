@@ -7,7 +7,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   PieChart, Pie, Cell, Legend,
 } from 'recharts'
-import { getDonations, updateDonation, DONATION_CATEGORIES, type Donation, type DonationSite } from '@/lib/storage'
+import { getDonations, updateDonation, deleteDonation, DONATION_CATEGORIES, type Donation, type DonationSite } from '@/lib/storage'
 import { getPlans, type Plan } from '@/lib/plans'
 import { loadTaxSettings, calculate } from '@/lib/calculator'
 import { PREFECTURES } from '@/lib/prefectures'
@@ -223,6 +223,8 @@ export default function DashboardPage() {
   const [sortDir,      setSortDir]      = useState<SortDir>('desc')
   const [selectedYear, setSelectedYear] = useState<number | 'all'>(CURRENT_YEAR)
   const [demoMode,     setDemoMode]     = useState(false)
+  const [editingDonation, setEditingDonation] = useState<Donation | null>(null)
+  const [deletingId,   setDeletingId]   = useState<string | null>(null)
 
   useEffect(() => {
     setDonations(getDonations())
@@ -237,6 +239,18 @@ export default function DashboardPage() {
     setDonations(d)
     setPlans(p)
     setDemoMode(true)
+  }
+
+  function handleSaveEdit(updated: Donation) {
+    updateDonation(updated)
+    setDonations(prev => prev.map(d => d.id === updated.id ? updated : d))
+    setEditingDonation(null)
+  }
+
+  function handleConfirmDelete(id: string) {
+    deleteDonation(id)
+    setDonations(prev => prev.filter(d => d.id !== id))
+    setDeletingId(null)
   }
 
   function handleClearDemo() {
@@ -675,6 +689,7 @@ export default function DashboardPage() {
                     証明書<br/>受取
                   </th>
                   <SortTh label="金額"   field="amount" current={sortField} dir={sortDir} onToggle={toggleSort} right />
+                  <th className="px-3 py-3 text-center font-medium w-20">操作</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -712,12 +727,47 @@ export default function DashboardPage() {
                     <td className="px-4 py-3 text-right font-semibold text-gray-900 tabular-nums whitespace-nowrap">
                       {yen(d.amount)}
                     </td>
+                    <td className="px-3 py-3">
+                      {deletingId === d.id ? (
+                        <div className="flex items-center gap-1 justify-center">
+                          <button
+                            onClick={() => handleConfirmDelete(d.id)}
+                            className="text-[11px] px-2 py-1 rounded bg-red-500 text-white font-semibold hover:bg-red-600 transition-colors"
+                          >
+                            削除
+                          </button>
+                          <button
+                            onClick={() => setDeletingId(null)}
+                            className="text-[11px] px-2 py-1 rounded bg-gray-100 text-gray-600 font-semibold hover:bg-gray-200 transition-colors"
+                          >
+                            戻す
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 justify-center">
+                          <button
+                            onClick={() => setEditingDonation(d)}
+                            title="編集"
+                            className="w-7 h-7 rounded flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            onClick={() => setDeletingId(d.id)}
+                            title="削除"
+                            className="w-7 h-7 rounded flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr className="bg-gray-50 border-t border-gray-100 text-xs font-semibold text-gray-600">
-                  <td colSpan={6} className="px-4 py-3">合計</td>
+                  <td colSpan={7} className="px-4 py-3">合計</td>
                   <td className="px-4 py-3 text-right tabular-nums text-gray-900">
                     {yen(totalThisYear)}
                   </td>
@@ -727,6 +777,14 @@ export default function DashboardPage() {
           </div>
         )}
       </section>
+    {/* ── edit donation modal ── */}
+    {editingDonation && (
+      <EditDonationModal
+        donation={editingDonation}
+        onSave={handleSaveEdit}
+        onClose={() => setEditingDonation(null)}
+      />
+    )}
     </div>
   )
 }
@@ -890,6 +948,194 @@ function GettingStartedCard({ onLoadDemo }: { onLoadDemo: () => void }) {
         >
           サンプルを読み込む →
         </button>
+      </div>
+    </div>
+  )
+}
+
+// ── edit donation modal ───────────────────────────────────────────────────────
+
+const SITES: DonationSite[] = ['Rakuten', 'Satofull', 'Choice', 'Other']
+
+function EditDonationModal({
+  donation,
+  onSave,
+  onClose,
+}: {
+  donation: Donation
+  onSave: (updated: Donation) => void
+  onClose: () => void
+}) {
+  const [form, setForm] = useState<Donation>({ ...donation })
+
+  function set<K extends keyof Donation>(k: K, v: Donation[K]) {
+    setForm(prev => ({ ...prev, [k]: v }))
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    onSave(form)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[2000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h3 className="text-base font-semibold text-gray-900">寄付を編集</h3>
+          <button
+            onClick={onClose}
+            className="text-gray-300 hover:text-gray-500 transition-colors text-xl leading-none"
+          >
+            ✕
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* prefecture + municipality */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">都道府県</label>
+              <select
+                className="input"
+                value={form.prefecture}
+                onChange={e => set('prefecture', e.target.value)}
+                required
+              >
+                <option value="">選択</option>
+                {PREFECTURES.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">市区町村</label>
+              <input
+                className="input"
+                type="text"
+                value={form.municipality}
+                onChange={e => set('municipality', e.target.value)}
+                required
+              />
+            </div>
+          </div>
+
+          {/* amount + date */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">寄付金額（円）</label>
+              <input
+                className="input"
+                type="number"
+                min={1}
+                step={1000}
+                value={form.amount || ''}
+                onChange={e => set('amount', Number(e.target.value))}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">寄付日</label>
+              <input
+                className="input"
+                type="date"
+                value={form.date}
+                onChange={e => set('date', e.target.value)}
+                required
+              />
+            </div>
+          </div>
+
+          {/* gift item */}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">返礼品名</label>
+            <input
+              className="input"
+              type="text"
+              value={form.giftItem}
+              onChange={e => set('giftItem', e.target.value)}
+            />
+          </div>
+
+          {/* category + site */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">カテゴリ</label>
+              <select
+                className="input"
+                value={form.category ?? ''}
+                onChange={e => set('category', e.target.value as Donation['category'] || undefined)}
+              >
+                <option value="">未設定</option>
+                {DONATION_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">サイト</label>
+              <select
+                className="input"
+                value={form.site}
+                onChange={e => set('site', e.target.value as DonationSite)}
+              >
+                {SITES.map(s => (
+                  <option key={s} value={s}>{SITE_LABELS[s]}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* receipt toggles */}
+          <div className="flex gap-6">
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={form.giftReceived ?? false}
+                onChange={e => set('giftReceived', e.target.checked)}
+                className="accent-green-600 w-4 h-4"
+              />
+              返礼品受取済み
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={form.certificateReceived ?? false}
+                onChange={e => set('certificateReceived', e.target.checked)}
+                className="accent-green-600 w-4 h-4"
+              />
+              証明書受取済み
+            </label>
+          </div>
+
+          {/* notes */}
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">メモ</label>
+            <textarea
+              className="input resize-none"
+              rows={2}
+              value={form.notes}
+              onChange={e => set('notes', e.target.value)}
+            />
+          </div>
+
+          <div className="flex gap-3 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+            >
+              キャンセル
+            </button>
+            <button
+              type="submit"
+              className="flex-1 py-2 text-sm font-semibold text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors"
+            >
+              保存する
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   )
