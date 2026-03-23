@@ -419,6 +419,12 @@ export default function DashboardPage() {
       {/* ── deadline reminders ── */}
       <DeadlineReminders />
 
+      {/* ── settings nudge (shown until income is configured) ── */}
+      {limit === null && <SettingsNudge />}
+
+      {/* ── getting started (shown when no donations recorded yet) ── */}
+      {donations.length === 0 && <GettingStartedCard />}
+
       {/* ── summary cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         <StatCard
@@ -771,6 +777,85 @@ function ChartEmpty() {
     <div className="h-[220px] flex items-center justify-center text-sm text-gray-300 select-none">
       データがありません
     </div>
+  )
+}
+
+// ── onboarding helpers ────────────────────────────────────────────────────────
+
+/**
+ * Blue nudge banner — visible until the user sets income > 0 in Settings.
+ * Disappears automatically once `calculate(settings).limit` is available.
+ */
+function SettingsNudge() {
+  return (
+    <div className="flex items-center gap-4 bg-blue-50 border border-blue-100 rounded-xl px-5 py-3.5">
+      <span className="text-2xl shrink-0 select-none">💡</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-blue-900">控除上限を計算しましょう</p>
+        <p className="text-xs text-blue-700 mt-0.5 leading-relaxed">
+          年収・家族構成を入力するだけで、今年のふるさと納税の上限額が自動で計算されます。
+        </p>
+      </div>
+      <Link
+        href="/settings"
+        className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors whitespace-nowrap"
+      >
+        設定する →
+      </Link>
+    </div>
+  )
+}
+
+/**
+ * Green "getting started" card — visible when zero donations have been recorded.
+ * Replaced automatically by real content as soon as the first donation is saved.
+ */
+function GettingStartedCard() {
+  return (
+    <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-100 rounded-xl p-6">
+      <p className="text-sm font-semibold text-green-800 mb-4">さっそく始めましょう</p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <StartAction
+          icon="🔍"
+          title="返礼品を発見"
+          desc="マップで全国の人気返礼品を探す"
+          href="/map"
+        />
+        <StartAction
+          icon="✏️"
+          title="寄付を記録"
+          desc="今年の寄付を入力する"
+          href="/log"
+        />
+        <StartAction
+          icon="📋"
+          title="プランを立てる"
+          desc="寄付予定を事前に管理する"
+          href="/plan"
+        />
+      </div>
+    </div>
+  )
+}
+
+function StartAction({
+  icon, title, desc, href,
+}: {
+  icon: string; title: string; desc: string; href: string
+}) {
+  return (
+    <Link
+      href={href}
+      className="flex items-center gap-3 bg-white rounded-xl px-4 py-3.5 border border-green-100 hover:border-green-300 hover:shadow-sm transition-all group"
+    >
+      <span className="text-2xl shrink-0 select-none">{icon}</span>
+      <div>
+        <p className="text-sm font-semibold text-gray-900 group-hover:text-green-700 transition-colors leading-snug">
+          {title}
+        </p>
+        <p className="text-xs text-gray-400 mt-0.5 leading-snug">{desc}</p>
+      </div>
+    </Link>
   )
 }
 
