@@ -293,3 +293,8 @@ export function getPrefGiftMunis(prefecture: string): Set<string> {
       .map(g => g.municipality),
   )
 }
+
+/** Prefectures that have at least one catalog entry — for zoomed-out map coloring. */
+export const ALL_GIFT_PREFS: ReadonlySet<string> = new Set(
+  GIFT_CATALOG.map(g => g.prefecture),
+)

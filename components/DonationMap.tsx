@@ -7,7 +7,7 @@ import 'leaflet/dist/leaflet.css'
 import { DONATION_CATEGORIES, type Donation, type DonationSite, type DonationCategory } from '@/lib/storage'
 import { getPlans, addPlan, type Plan, type PlanSite } from '@/lib/plans'
 import { PREF_CODE } from '@/lib/prefectureCodes'
-import { getMuniGifts, type GiftItem } from '@/lib/giftCatalog'
+import { getMuniGifts, getPrefGiftMunis, ALL_GIFT_PREFS, type GiftItem } from '@/lib/giftCatalog'
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -46,14 +46,16 @@ const LEGEND_STEPS = [
 
 // ── municipality layer colors ──────────────────────────────────────────────────
 
-const JAPAN_BOUNDS     = L.latLngBounds([[24, 122], [46, 148]])
-const MUNI_FILL        = '#bfdbfe'  // blue-200  — no data
-const MUNI_FILL_PLAN   = '#ddd6fe'  // violet-200 — has active plan, no donation
-const MUNI_FILL_DONE   = '#86efac'  // green-300  — has donation
-const MUNI_STROKE      = '#60a5fa'  // blue-400
-const MUNI_HIGHLIGHT   = '#22c55e'  // green-500
-const PREF_DIM         = 0.25       // fillOpacity for non-selected prefectures
-const PREF_PLAN_COLOR  = '#93c5fd'  // blue-300   — prefecture with plans, no donation
+const JAPAN_BOUNDS       = L.latLngBounds([[24, 122], [46, 148]])
+const MUNI_FILL          = '#bfdbfe'  // blue-200   — no data
+const MUNI_FILL_CATALOG  = '#fef3c7'  // amber-100  — has catalog data, no donation/plan
+const MUNI_FILL_PLAN     = '#ddd6fe'  // violet-200 — has active plan, no donation
+const MUNI_FILL_DONE     = '#86efac'  // green-300  — has donation
+const MUNI_STROKE        = '#60a5fa'  // blue-400
+const MUNI_HIGHLIGHT     = '#22c55e'  // green-500
+const PREF_DIM           = 0.25       // fillOpacity for non-selected prefectures
+const PREF_PLAN_COLOR    = '#93c5fd'  // blue-300   — prefecture with plans, no donation
+const PREF_CATALOG_COLOR = '#fde68a'  // amber-200  — prefecture with catalog, no donation/plan
 
 const PLAN_SITES: PlanSite[] = ['Rakuten', 'Satofull', 'Choice']
 const CURRENT_YEAR = new Date().getFullYear()
@@ -158,9 +160,18 @@ function buildPrefPopupHtml(
   // Plans detail section (all active plans, regardless of year — they're future-facing)
   const plansDetail = buildPlansDetailHtml(activePlans)
 
+  // Gift catalog section — shown when any municipalities in this prefecture have catalog entries
+  const catalogMunis = getPrefGiftMunis(prefName)
+  const catalogSection = catalogMunis.size > 0 ? `
+    <div style="padding:7px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:7px;margin-bottom:8px;">
+      <p style="font-size:11px;font-weight:700;color:#b45309;margin:0 0 2px;">🎁 返礼品情報あり</p>
+      <p style="font-size:11px;color:#78350f;margin:0;">${catalogMunis.size}自治体の返礼品データがあります。クリックして探しましょう。</p>
+    </div>` : ''
+
   // ── No data at all ───────────────────────────────────────────────────────────
   if (!hasAny && activePlans.length === 0) {
     return `<div style="${W}">${header}
+      ${catalogSection}
       <p style="font-size:13px;color:#d1d5db;margin:0 0 10px;">まだ寄付・プランがありません</p>
       ${AFFILIATE_LINKS_HTML}
     </div>`
@@ -169,6 +180,7 @@ function buildPrefPopupHtml(
   // ── Only plans, no donations ─────────────────────────────────────────────────
   if (donCount === 0) {
     return `<div style="${W}">${header}
+      ${catalogSection}
       ${summary}
       ${plansDetail}
       ${AFFILIATE_LINKS_HTML}
@@ -189,6 +201,7 @@ function buildPrefPopupHtml(
         <td style="padding:2px 0;font-weight:600;color:#111827;white-space:nowrap;">¥${byYear[y].toLocaleString()}</td>
       </tr>`).join('')
     return `<div style="${W}">${header}
+      ${catalogSection}
       ${summary}
       <table style="font-size:12px;margin-bottom:10px;width:100%;border-collapse:collapse;">
         <thead><tr>
@@ -208,6 +221,7 @@ function buildPrefPopupHtml(
       <span style="color:#9ca3af;">${esc(d.municipality)}</span> — ${esc(d.giftItem)}
     </div>`).join('')
   return `<div style="${W}">${header}
+    ${catalogSection}
     ${summary}
     <div style="margin-bottom:10px;">
       <p style="font-size:10px;font-weight:600;color:#9ca3af;letter-spacing:.06em;text-transform:uppercase;margin:0 0 4px;">返礼品</p>
@@ -224,13 +238,15 @@ function Legend({ year, inMuniMode }: { year: number | 'all'; inMuniMode: boolea
   const yearLabel = year === 'all' ? '全年度' : `${year}年`
 
   const muniSteps = [
-    { label: '未寄付',   color: MUNI_FILL },
-    { label: '計画中',   color: MUNI_FILL_PLAN },
-    { label: '寄付済み', color: MUNI_FILL_DONE },
+    { label: '未寄付',      color: MUNI_FILL },
+    { label: '返礼品あり',  color: MUNI_FILL_CATALOG },
+    { label: '計画中',      color: MUNI_FILL_PLAN },
+    { label: '寄付済み',    color: MUNI_FILL_DONE },
   ]
 
   const prefSteps = [
     { label: '未寄付',      color: NO_DONATION_COLOR },
+    { label: '返礼品情報',  color: PREF_CATALOG_COLOR },
     { label: '計画中',      color: PREF_PLAN_COLOR },
     ...LEGEND_STEPS.slice(1),   // skip the existing 未寄付 entry
   ]
@@ -811,6 +827,9 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
     }
   }
 
+  // Gift catalog municipalities for the selected prefecture (static lookup, fast)
+  const prefGiftMunis: Set<string> = selectedPref ? getPrefGiftMunis(selectedPref) : new Set()
+
   const maxAmount = Math.max(
     1,
     ...Object.values(byPrefecture).map((ds) => ds.reduce((s, d) => s + d.amount, 0)),
@@ -840,10 +859,13 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
 
     const ds = name ? (byPrefecture[name] ?? []) : []
     const total = ds.reduce((s, d) => s + d.amount, 0)
-    const hasPlans = name ? (activePlansByPref[name] ?? []).length > 0 : false
+    const hasPlans   = name ? (activePlansByPref[name] ?? []).length > 0 : false
+    const hasCatalog = name ? ALL_GIFT_PREFS.has(name) : false
     const fillColor = total > 0
       ? amountToColor(total, maxAmount)
-      : hasPlans ? PREF_PLAN_COLOR : NO_DONATION_COLOR
+      : hasPlans   ? PREF_PLAN_COLOR
+      : hasCatalog ? PREF_CATALOG_COLOR
+      : NO_DONATION_COLOR
     return {
       fillColor,
       fillOpacity: 0.75,
@@ -864,9 +886,11 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
     const tipDonTotal  = tipDs.reduce((s, d) => s + d.amount, 0)
     const tipPlanCount = tipPlans.length
     const tipPlanTotal = tipPlans.reduce((s, p) => s + p.plannedAmount, 0)
+    const tipCatalogCount = getPrefGiftMunis(name).size
     let tipHtml = `<strong>${esc(name)}</strong>`
-    if (tipDonCount  > 0) tipHtml += `<br><span style="color:#16a34a;font-size:12px;">寄付 ${tipDonCount}件 ¥${tipDonTotal.toLocaleString()}</span>`
-    if (tipPlanCount > 0) tipHtml += `<br><span style="color:#7c3aed;font-size:12px;">📋 計画 ${tipPlanCount}件 ¥${tipPlanTotal.toLocaleString()}</span>`
+    if (tipDonCount     > 0) tipHtml += `<br><span style="color:#16a34a;font-size:12px;">寄付 ${tipDonCount}件 ¥${tipDonTotal.toLocaleString()}</span>`
+    if (tipPlanCount    > 0) tipHtml += `<br><span style="color:#7c3aed;font-size:12px;">📋 計画 ${tipPlanCount}件 ¥${tipPlanTotal.toLocaleString()}</span>`
+    if (tipCatalogCount > 0) tipHtml += `<br><span style="color:#b45309;font-size:12px;">🎁 返礼品情報 ${tipCatalogCount}自治体</span>`
     layer.bindTooltip(tipHtml, { sticky: true, direction: 'center' })
     layer.bindPopup(buildPrefPopupHtml(name, byPrefectureAll[name] ?? [], selectedYear, activePlansByPref[name] ?? []), { maxWidth: 300 })
 
@@ -907,8 +931,12 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
     const prefPlans = selectedPref ? (activePlansByPref[selectedPref] ?? []) : []
     const hasDonation = prefDons.some(d => d.municipality === muniName)
     const hasPlan     = prefPlans.some(p => p.municipality === muniName)
-    const fillColor   = hasDonation ? MUNI_FILL_DONE : hasPlan ? MUNI_FILL_PLAN : MUNI_FILL
-    const fillOpacity = hasDonation ? 0.65 : hasPlan ? 0.55 : 0.3
+    const hasCatalog  = prefGiftMunis.has(muniName)
+    const fillColor   = hasDonation ? MUNI_FILL_DONE
+                      : hasPlan     ? MUNI_FILL_PLAN
+                      : hasCatalog  ? MUNI_FILL_CATALOG
+                      : MUNI_FILL
+    const fillOpacity = hasDonation ? 0.65 : hasPlan ? 0.55 : hasCatalog ? 0.5 : 0.3
     return { fillColor, fillOpacity, color: MUNI_STROKE, weight: 1 }
   }
 
@@ -929,15 +957,18 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
 
     const hasDonation = muniTotal > 0
     const hasPlan     = !!muniPlan
+    const catalogGifts = selectedPref ? getMuniGifts(selectedPref, muniName) : []
+    const hasCatalog  = catalogGifts.length > 0
 
     // Tooltip
     let tipHtml = esc(muniName)
-    if (hasDonation) tipHtml += `<br><span style="color:#16a34a;font-weight:700;">寄付 ¥${muniTotal.toLocaleString()}</span>`
-    if (hasPlan) tipHtml += `<br><span style="color:#7c3aed;font-weight:600;">📋 計画 ¥${muniPlan!.plannedAmount.toLocaleString()}</span>`
+    if (hasDonation)  tipHtml += `<br><span style="color:#16a34a;font-weight:700;">寄付 ¥${muniTotal.toLocaleString()}</span>`
+    if (hasPlan)      tipHtml += `<br><span style="color:#7c3aed;font-weight:600;">📋 計画 ¥${muniPlan!.plannedAmount.toLocaleString()}</span>`
+    if (hasCatalog)   tipHtml += `<br><span style="color:#b45309;font-size:12px;">🎁 返礼品 ${catalogGifts.length}件あり</span>`
     layer.bindTooltip(tipHtml, { sticky: true, direction: 'top' })
 
-    const restoreOpacity = hasDonation ? 0.65 : hasPlan ? 0.55 : 0.3
-    const hoverColor     = hasDonation ? MUNI_HIGHLIGHT : hasPlan ? '#7c3aed' : MUNI_HIGHLIGHT
+    const restoreOpacity = hasDonation ? 0.65 : hasPlan ? 0.55 : hasCatalog ? 0.5 : 0.3
+    const hoverColor     = hasDonation ? MUNI_HIGHLIGHT : hasPlan ? '#7c3aed' : hasCatalog ? '#d97706' : MUNI_HIGHLIGHT
 
     layer.on({
       mouseover() {
