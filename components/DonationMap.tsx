@@ -7,6 +7,7 @@ import 'leaflet/dist/leaflet.css'
 import { DONATION_CATEGORIES, type Donation, type DonationSite, type DonationCategory } from '@/lib/storage'
 import { getPlans, addPlan, type Plan, type PlanSite } from '@/lib/plans'
 import { PREF_CODE } from '@/lib/prefectureCodes'
+import { getMuniGifts, type GiftItem } from '@/lib/giftCatalog'
 
 // ── types ─────────────────────────────────────────────────────────────────────
 
@@ -329,6 +330,104 @@ function MapController({ bounds }: { bounds: L.LatLngBounds | null }) {
   return null
 }
 
+// ── GiftCatalogTab — tab 0: discover popular gift items ──────────────────────
+
+const CAT_EMOJI: Record<string, string> = {
+  '肉類': '🥩', '魚介類': '🐟', '野菜・果物': '🍎', '米・穀物': '🌾',
+  '乳製品・加工食品': '🧀', '飲料・お酒': '🍶', '日用品・雑貨': '🧴',
+  '工芸品・アート': '🎨', '体験・旅行': '✈️', 'その他': '📦',
+}
+
+function GiftCatalogTab({
+  gifts,
+  onSelectGift,
+}: {
+  gifts: GiftItem[]
+  onSelectGift: (gift: GiftItem) => void
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {gifts.map(gift => (
+        <div
+          key={gift.id}
+          style={{
+            border: `1px solid ${gift.popular ? '#fde68a' : '#f0f0f0'}`,
+            borderRadius: 10,
+            padding: '11px 13px',
+            background: gift.popular ? '#fffbeb' : '#fafafa',
+          }}
+        >
+          {/* name */}
+          <p style={{ fontWeight: 700, fontSize: 13, color: '#111827', margin: '0 0 3px', lineHeight: 1.35 }}>
+            {gift.popular && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, color: '#b45309',
+                background: '#fef3c7', borderRadius: 4,
+                padding: '1px 5px', marginRight: 6,
+              }}>
+                人気
+              </span>
+            )}
+            {gift.name}
+          </p>
+
+          {/* category + min amount */}
+          <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 5px' }}>
+            {CAT_EMOJI[gift.category] ?? '📦'} {gift.category}
+            <span style={{ fontWeight: 600, color: '#374151', marginLeft: 8 }}>
+              ¥{gift.minAmount.toLocaleString()}〜
+            </span>
+          </p>
+
+          {/* description */}
+          {gift.description && (
+            <p style={{ fontSize: 12, color: '#4b5563', margin: '0 0 9px', lineHeight: 1.45 }}>
+              {gift.description}
+            </p>
+          )}
+
+          {/* affiliate links + pre-fill shortcut */}
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+            {gift.rakutenUrl && (
+              <a href={gift.rakutenUrl} target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 11, padding: '4px 9px', borderRadius: 5, background: '#bf0000', color: 'white', textDecoration: 'none', fontWeight: 600 }}>
+                楽天
+              </a>
+            )}
+            {gift.satofullUrl && (
+              <a href={gift.satofullUrl} target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 11, padding: '4px 9px', borderRadius: 5, background: '#1d4ed8', color: 'white', textDecoration: 'none', fontWeight: 600 }}>
+                さとふる
+              </a>
+            )}
+            {gift.choiceUrl && (
+              <a href={gift.choiceUrl} target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 11, padding: '4px 9px', borderRadius: 5, background: '#065f46', color: 'white', textDecoration: 'none', fontWeight: 600 }}>
+                チョイス
+              </a>
+            )}
+            <button
+              onClick={() => onSelectGift(gift)}
+              style={{
+                marginLeft: 'auto',
+                fontSize: 11, padding: '4px 9px', borderRadius: 5,
+                background: '#f0fdf4', color: '#15803d',
+                border: '1px solid #bbf7d0', cursor: 'pointer', fontWeight: 600,
+              }}
+            >
+              📝 この返礼品で記録
+            </button>
+          </div>
+        </div>
+      ))}
+
+      <p style={{ fontSize: 11, color: '#9ca3af', textAlign: 'center', margin: '2px 0 0' }}>
+        ※ 上記リンクは広告リンクを含む場合があります
+      </p>
+    </div>
+  )
+}
+
 // ── MuniActionModal — tabbed: log donation OR add plan ────────────────────────
 
 interface ModalState {
@@ -359,8 +458,37 @@ const LABEL_STYLE: React.CSSProperties = {
   fontSize: 12, fontWeight: 500, color: '#4b5563',
 }
 
+type ModalTab = 'gifts' | 'donation' | 'plan'
+
+interface GiftPrefill {
+  giftItem?: string
+  category?: DonationCategory
+  minAmount?: number
+}
+
+const TAB_COLOR: Record<ModalTab, string> = {
+  gifts:    '#f59e0b',
+  donation: '#16a34a',
+  plan:     '#7c3aed',
+}
+
 function MuniActionModal({ modal, onClose, onSaveDonation, onSavePlan }: ModalProps) {
-  const [mode, setMode] = useState<'donation' | 'plan'>('donation')
+  const gifts    = getMuniGifts(modal.prefecture, modal.municipality)
+  const hasGifts = gifts.length > 0
+
+  const [tab, setTab]         = useState<ModalTab>(hasGifts ? 'gifts' : 'donation')
+  const [prefill, setPrefill] = useState<GiftPrefill>({})
+
+  function handleSelectGift(gift: GiftItem) {
+    setPrefill({ giftItem: gift.name, category: gift.category, minAmount: gift.minAmount })
+    setTab('donation')
+  }
+
+  const tabs: { id: ModalTab; label: string }[] = [
+    ...(hasGifts ? [{ id: 'gifts' as const, label: '🎁 返礼品を見る' }] : []),
+    { id: 'donation', label: '📝 寄付を記録' },
+    { id: 'plan',     label: '📋 プランを追加' },
+  ]
 
   return (
     <div
@@ -384,22 +512,23 @@ function MuniActionModal({ modal, onClose, onSaveDonation, onSavePlan }: ModalPr
         </div>
 
         {/* ── tab bar ── */}
-        <div style={{ display: 'flex', gap: 4, marginBottom: 18, borderBottom: '2px solid #f3f4f6', paddingBottom: 0 }}>
-          {([['donation', '📝 寄付を記録'], ['plan', '📋 プランを追加']] as const).map(([m, label]) => (
+        <div style={{ display: 'flex', gap: 4, marginBottom: 18, borderBottom: '2px solid #f3f4f6' }}>
+          {tabs.map(({ id, label }) => (
             <button
-              key={m}
-              onClick={() => setMode(m)}
+              key={id}
+              onClick={() => setTab(id)}
               style={{
                 padding: '7px 14px',
                 fontSize: 13,
-                fontWeight: mode === m ? 700 : 500,
-                color: mode === m ? (m === 'donation' ? '#16a34a' : '#7c3aed') : '#6b7280',
+                fontWeight: tab === id ? 700 : 500,
+                color: tab === id ? TAB_COLOR[id] : '#6b7280',
                 background: 'none',
                 border: 'none',
-                borderBottom: mode === m ? `2px solid ${m === 'donation' ? '#16a34a' : '#7c3aed'}` : '2px solid transparent',
+                borderBottom: tab === id ? `2px solid ${TAB_COLOR[id]}` : '2px solid transparent',
                 marginBottom: -2,
                 cursor: 'pointer',
                 transition: 'color 0.15s',
+                whiteSpace: 'nowrap',
               }}
             >
               {label}
@@ -408,9 +537,18 @@ function MuniActionModal({ modal, onClose, onSaveDonation, onSavePlan }: ModalPr
         </div>
 
         {/* ── tab content ── */}
-        {mode === 'donation'
-          ? <DonationForm modal={modal} onClose={onClose} onSave={onSaveDonation} />
-          : <PlanForm     modal={modal} onClose={onClose} onSave={onSavePlan} />}
+        {tab === 'gifts' && (
+          <GiftCatalogTab gifts={gifts} onSelectGift={handleSelectGift} />
+        )}
+        {tab === 'donation' && (
+          <DonationForm
+            key={`${prefill.giftItem ?? ''}-${prefill.minAmount ?? 0}`}
+            modal={modal} onClose={onClose} onSave={onSaveDonation} prefill={prefill}
+          />
+        )}
+        {tab === 'plan' && (
+          <PlanForm modal={modal} onClose={onClose} onSave={onSavePlan} />
+        )}
       </div>
     </div>
   )
@@ -418,16 +556,17 @@ function MuniActionModal({ modal, onClose, onSaveDonation, onSavePlan }: ModalPr
 
 // ── DonationForm (tab 1) ──────────────────────────────────────────────────────
 
-function DonationForm({ modal, onClose, onSave }: {
+function DonationForm({ modal, onClose, onSave, prefill = {} }: {
   modal: ModalState
   onClose: () => void
   onSave: (data: Omit<Donation, 'id'>) => void
+  prefill?: GiftPrefill
 }) {
   const today = new Date().toISOString().slice(0, 10)
-  const [amount, setAmount]     = useState('')
+  const [amount, setAmount]     = useState(prefill.minAmount ? String(prefill.minAmount) : '')
   const [date, setDate]         = useState(today)
-  const [giftItem, setGiftItem] = useState('')
-  const [category, setCategory] = useState<DonationCategory | ''>('')
+  const [giftItem, setGiftItem] = useState(prefill.giftItem ?? '')
+  const [category, setCategory] = useState<DonationCategory | ''>(prefill.category ?? '')
   const [site, setSite]         = useState<DonationSite>('Rakuten')
   const [notes, setNotes]       = useState('')
   const [saved, setSaved]       = useState(false)
