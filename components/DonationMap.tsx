@@ -95,21 +95,40 @@ const AFFILIATE_LINKS_HTML = `
     </div>
   </div>`
 
-function buildPlansHtml(activePlans: Plan[]): string {
-  if (activePlans.length === 0) return ''
-  const rows = activePlans.slice(0, 3).map(p => `
-    <div style="font-size:12px;color:#374151;padding:2px 0;display:flex;justify-content:space-between;gap:8px;">
-      <span style="color:#6b7280;">${esc(p.municipality)}</span>
-      <span style="font-weight:600;white-space:nowrap;color:#3b82f6;">¥${p.plannedAmount.toLocaleString()}</span>
-    </div>`).join('')
-  const more = activePlans.length > 3
-    ? `<p style="font-size:11px;color:#9ca3af;margin:3px 0 0;">他${activePlans.length - 3}件…</p>`
-    : ''
+// ── Prefecture popup helpers ──────────────────────────────────────────────────
+
+/** Top summary bar: donated X件 ¥X  |  planned X件 ¥X */
+function buildSummaryHtml(
+  donCount: number, donTotal: number,
+  planCount: number, planTotal: number,
+): string {
+  const col = (label: string, color: string, total: number, count: number) => `
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:10px;font-weight:600;color:#9ca3af;letter-spacing:.05em;text-transform:uppercase;margin-bottom:2px;">${label}</div>
+      <div style="font-size:15px;font-weight:700;color:${color};white-space:nowrap;">¥${total.toLocaleString()}</div>
+      <div style="font-size:11px;color:#6b7280;margin-top:1px;">${count}件</div>
+    </div>`
+  const divider = `<div style="width:1px;background:#e5e7eb;flex-shrink:0;margin:2px 0;"></div>`
   return `
-    <div style="padding-top:8px;border-top:1px solid #e5e7eb;margin-top:4px;">
-      <p style="font-size:10px;font-weight:600;color:#9ca3af;letter-spacing:.06em;text-transform:uppercase;margin:0 0 5px;">
-        📋 計画中
-      </p>
+    <div style="display:flex;gap:10px;align-items:stretch;padding:8px 10px;background:#f9fafb;border:1px solid #f0f0f0;border-radius:8px;margin-bottom:10px;">
+      ${col('寄付済み', donCount > 0 ? '#16a34a' : '#d1d5db', donTotal, donCount)}
+      ${planCount > 0 ? divider + col('計画中', '#7c3aed', planTotal, planCount) : ''}
+    </div>`
+}
+
+/** Municipality list for active plans */
+function buildPlansDetailHtml(plans: Plan[]): string {
+  if (plans.length === 0) return ''
+  const rows = plans.slice(0, 4).map(p => `
+    <div style="font-size:12px;padding:2px 0;display:flex;justify-content:space-between;gap:8px;border-bottom:1px solid #f3f4f6;">
+      <span style="color:#6b7280;">${esc(p.municipality)}</span>
+      <span style="font-weight:600;white-space:nowrap;color:#7c3aed;">¥${p.plannedAmount.toLocaleString()}</span>
+    </div>`).join('')
+  const more = plans.length > 4
+    ? `<p style="font-size:11px;color:#9ca3af;margin:3px 0 0;">他${plans.length - 4}件…</p>` : ''
+  return `
+    <div style="padding-top:8px;border-top:1px solid #e5e7eb;margin-top:6px;">
+      <p style="font-size:10px;font-weight:600;color:#9ca3af;letter-spacing:.06em;text-transform:uppercase;margin:0 0 5px;">📋 計画中の自治体</p>
       ${rows}${more}
     </div>`
 }
@@ -120,20 +139,43 @@ function buildPrefPopupHtml(
   year: number | 'all',
   activePlans: Plan[],
 ): string {
-  const header = `<h3 style="font-size:15px;font-weight:700;margin:0 0 8px;color:#111827;">${esc(prefName)}</h3>`
-  const plansHtml = buildPlansHtml(activePlans)
+  const W = 'min-width:240px;font-family:system-ui,-apple-system,sans-serif;'
+  const header = `<h3 style="font-size:15px;font-weight:700;margin:0 0 10px;color:#111827;">${esc(prefName)}</h3>`
 
-  if (allDs.length === 0) {
-    return `<div style="min-width:230px;font-family:system-ui,-apple-system,sans-serif;">
-      ${header}
-      <p style="font-size:13px;color:#d1d5db;margin:0 0 10px;">まだ寄付していません</p>
-      ${plansHtml}
+  // Slice both datasets to the selected year
+  const yearDs    = year === 'all' ? allDs    : allDs.filter(d => d.date.startsWith(String(year)))
+  const yearPlans = year === 'all' ? activePlans : activePlans.filter(p => p.year === year)
+
+  const donCount  = yearDs.length
+  const donTotal  = yearDs.reduce((s, d) => s + d.amount, 0)
+  const planCount = yearPlans.length
+  const planTotal = yearPlans.reduce((s, p) => s + p.plannedAmount, 0)
+
+  const hasAny = donCount > 0 || planCount > 0
+  const summary = hasAny ? buildSummaryHtml(donCount, donTotal, planCount, planTotal) : ''
+
+  // Plans detail section (all active plans, regardless of year — they're future-facing)
+  const plansDetail = buildPlansDetailHtml(activePlans)
+
+  // ── No data at all ───────────────────────────────────────────────────────────
+  if (!hasAny && activePlans.length === 0) {
+    return `<div style="${W}">${header}
+      <p style="font-size:13px;color:#d1d5db;margin:0 0 10px;">まだ寄付・プランがありません</p>
       ${AFFILIATE_LINKS_HTML}
     </div>`
   }
 
+  // ── Only plans, no donations ─────────────────────────────────────────────────
+  if (donCount === 0) {
+    return `<div style="${W}">${header}
+      ${summary}
+      ${plansDetail}
+      ${AFFILIATE_LINKS_HTML}
+    </div>`
+  }
+
+  // ── All years: year-breakdown table ─────────────────────────────────────────
   if (year === 'all') {
-    const total = allDs.reduce((s, d) => s + d.amount, 0)
     const byYear: Record<string, number> = {}
     for (const d of allDs) {
       const y = d.date.slice(0, 4)
@@ -144,49 +186,33 @@ function buildPrefPopupHtml(
       .map(y => `<tr>
         <td style="padding:2px 10px 2px 0;color:#6b7280;">${y}年</td>
         <td style="padding:2px 0;font-weight:600;color:#111827;white-space:nowrap;">¥${byYear[y].toLocaleString()}</td>
-      </tr>`)
-      .join('')
-    return `<div style="min-width:230px;font-family:system-ui,-apple-system,sans-serif;">
-      ${header}
-      <p style="font-size:12px;color:#6b7280;margin:0 0 2px;">累計 ${allDs.length}件</p>
-      <p style="font-size:18px;font-weight:700;color:#16a34a;margin:0 0 8px;">¥${total.toLocaleString()}</p>
+      </tr>`).join('')
+    return `<div style="${W}">${header}
+      ${summary}
       <table style="font-size:12px;margin-bottom:10px;width:100%;border-collapse:collapse;">
         <thead><tr>
           <th style="text-align:left;font-size:10px;font-weight:600;color:#9ca3af;padding-bottom:3px;">年度</th>
-          <th style="text-align:left;font-size:10px;font-weight:600;color:#9ca3af;padding-bottom:3px;">合計</th>
+          <th style="text-align:left;font-size:10px;font-weight:600;color:#9ca3af;padding-bottom:3px;">寄付合計</th>
         </tr></thead>
         <tbody>${yearRows}</tbody>
       </table>
-      ${plansHtml}
+      ${plansDetail}
       ${AFFILIATE_LINKS_HTML}
     </div>`
   }
 
-  // Specific year
-  const yearStr = String(year)
-  const yearDs = allDs.filter(d => d.date.startsWith(yearStr))
-  if (yearDs.length === 0) {
-    return `<div style="min-width:230px;font-family:system-ui,-apple-system,sans-serif;">
-      ${header}
-      <p style="font-size:13px;color:#d1d5db;margin:0 0 10px;">${year}年の寄付はありません</p>
-      ${plansHtml}
-      ${AFFILIATE_LINKS_HTML}
-    </div>`
-  }
-  const total = yearDs.reduce((s, d) => s + d.amount, 0)
+  // ── Specific year: gift item list ────────────────────────────────────────────
   const items = yearDs.map(d => `
     <div style="font-size:12px;color:#374151;padding:3px 0;border-bottom:1px solid #f3f4f6;">
       <span style="color:#9ca3af;">${esc(d.municipality)}</span> — ${esc(d.giftItem)}
     </div>`).join('')
-  return `<div style="min-width:230px;font-family:system-ui,-apple-system,sans-serif;">
-    ${header}
-    <p style="font-size:12px;color:#6b7280;margin:0 0 2px;">${year}年・${yearDs.length}件</p>
-    <p style="font-size:18px;font-weight:700;color:#16a34a;margin:0 0 8px;">¥${total.toLocaleString()}</p>
+  return `<div style="${W}">${header}
+    ${summary}
     <div style="margin-bottom:10px;">
       <p style="font-size:10px;font-weight:600;color:#9ca3af;letter-spacing:.06em;text-transform:uppercase;margin:0 0 4px;">返礼品</p>
       ${items}
     </div>
-    ${plansHtml}
+    ${plansDetail}
     ${AFFILIATE_LINKS_HTML}
   </div>`
 }
@@ -745,12 +771,12 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
 
     // Tooltip
     let tipHtml = esc(muniName)
-    if (hasDonation) tipHtml += `<br><span style="color:#16a34a;font-weight:700;">¥${muniTotal.toLocaleString()}</span>`
-    if (hasPlan && !hasDonation) tipHtml += `<br><span style="color:#7c3aed;font-weight:600;">📋 ¥${muniPlan!.plannedAmount.toLocaleString()}</span>`
+    if (hasDonation) tipHtml += `<br><span style="color:#16a34a;font-weight:700;">寄付 ¥${muniTotal.toLocaleString()}</span>`
+    if (hasPlan) tipHtml += `<br><span style="color:#7c3aed;font-weight:600;">📋 計画 ¥${muniPlan!.plannedAmount.toLocaleString()}</span>`
     layer.bindTooltip(tipHtml, { sticky: true, direction: 'top' })
 
     const restoreOpacity = hasDonation ? 0.65 : hasPlan ? 0.55 : 0.3
-    const hoverColor     = hasPlan && !hasDonation ? '#7c3aed' : MUNI_HIGHLIGHT
+    const hoverColor     = hasDonation ? MUNI_HIGHLIGHT : hasPlan ? '#7c3aed' : MUNI_HIGHLIGHT
 
     layer.on({
       mouseover() {
