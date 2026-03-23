@@ -5,7 +5,7 @@ import { MapContainer, TileLayer, GeoJSON, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { DONATION_CATEGORIES, type Donation, type DonationSite, type DonationCategory } from '@/lib/storage'
-import { getPlans, type Plan } from '@/lib/plans'
+import { getPlans, addPlan, type Plan, type PlanSite } from '@/lib/plans'
 import { PREF_CODE } from '@/lib/prefectureCodes'
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -46,11 +46,16 @@ const LEGEND_STEPS = [
 // ── municipality layer colors ──────────────────────────────────────────────────
 
 const JAPAN_BOUNDS     = L.latLngBounds([[24, 122], [46, 148]])
-const MUNI_FILL        = '#bfdbfe'  // blue-200 (no donation)
-const MUNI_FILL_DONE   = '#86efac'  // green-300 (has donation)
+const MUNI_FILL        = '#bfdbfe'  // blue-200  — no data
+const MUNI_FILL_PLAN   = '#ddd6fe'  // violet-200 — has active plan, no donation
+const MUNI_FILL_DONE   = '#86efac'  // green-300  — has donation
 const MUNI_STROKE      = '#60a5fa'  // blue-400
 const MUNI_HIGHLIGHT   = '#22c55e'  // green-500
 const PREF_DIM         = 0.25       // fillOpacity for non-selected prefectures
+const PREF_PLAN_COLOR  = '#93c5fd'  // blue-300   — prefecture with plans, no donation
+
+const PLAN_SITES: PlanSite[] = ['Rakuten', 'Satofull', 'Choice']
+const CURRENT_YEAR = new Date().getFullYear()
 
 // ── site config for modal ─────────────────────────────────────────────────────
 
@@ -188,8 +193,24 @@ function buildPrefPopupHtml(
 
 // ── Legend overlay (React, not a Leaflet control) ────────────────────────────
 
-function Legend({ year }: { year: number | 'all' }) {
+function Legend({ year, inMuniMode }: { year: number | 'all'; inMuniMode: boolean }) {
   const yearLabel = year === 'all' ? '全年度' : `${year}年`
+
+  const muniSteps = [
+    { label: '未寄付',   color: MUNI_FILL },
+    { label: '計画中',   color: MUNI_FILL_PLAN },
+    { label: '寄付済み', color: MUNI_FILL_DONE },
+  ]
+
+  const prefSteps = [
+    { label: '未寄付',      color: NO_DONATION_COLOR },
+    { label: '計画中',      color: PREF_PLAN_COLOR },
+    ...LEGEND_STEPS.slice(1),   // skip the existing 未寄付 entry
+  ]
+
+  const steps    = inMuniMode ? muniSteps : prefSteps
+  const heading  = inMuniMode ? '市区町村' : `寄付金額（${yearLabel}）`
+
   return (
     <div
       style={{
@@ -206,9 +227,9 @@ function Legend({ year }: { year: number | 'all' }) {
       }}
     >
       <div style={{ fontSize: 11, fontWeight: 700, color: '#374151', marginBottom: 6 }}>
-        寄付金額（{yearLabel}）
+        {heading}
       </div>
-      {LEGEND_STEPS.map(({ label, color }) => (
+      {steps.map(({ label, color }) => (
         <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
           <div
             style={{
@@ -282,7 +303,7 @@ function MapController({ bounds }: { bounds: L.LatLngBounds | null }) {
   return null
 }
 
-// ── LogDonationModal ──────────────────────────────────────────────────────────
+// ── MuniActionModal — tabbed: log donation OR add plan ────────────────────────
 
 interface ModalState {
   prefecture: string
@@ -292,18 +313,98 @@ interface ModalState {
 interface ModalProps {
   modal: ModalState
   onClose: () => void
-  onSave: (data: Omit<Donation, 'id'>) => void
+  onSaveDonation: (data: Omit<Donation, 'id'>) => void
+  onSavePlan: (data: Omit<Plan, 'id'>) => void
 }
 
-function LogDonationModal({ modal, onClose, onSave }: ModalProps) {
+// Shared inline styles
+const CARD_STYLE: React.CSSProperties = {
+  background: 'white',
+  borderRadius: 14,
+  padding: '22px 26px',
+  width: 'min(480px, 92vw)',
+  maxHeight: '90vh',
+  overflowY: 'auto',
+  boxShadow: '0 8px 32px rgba(0,0,0,0.22)',
+  fontFamily: 'system-ui,-apple-system,sans-serif',
+}
+const LABEL_STYLE: React.CSSProperties = {
+  display: 'flex', flexDirection: 'column', gap: 4,
+  fontSize: 12, fontWeight: 500, color: '#4b5563',
+}
+
+function MuniActionModal({ modal, onClose, onSaveDonation, onSavePlan }: ModalProps) {
+  const [mode, setMode] = useState<'donation' | 'plan'>('donation')
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, zIndex: 2000,
+        background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: '16px',
+      }}
+      onClick={onClose}
+    >
+      <div style={CARD_STYLE} onClick={e => e.stopPropagation()}>
+        {/* ── header ── */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+          <p style={{ fontSize: 13, color: '#374151', margin: 0 }}>
+            <strong>{esc(modal.prefecture)}</strong>　{esc(modal.municipality)}
+          </p>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: '#9ca3af', lineHeight: 1, padding: '2px 4px' }}>
+            ✕
+          </button>
+        </div>
+
+        {/* ── tab bar ── */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 18, borderBottom: '2px solid #f3f4f6', paddingBottom: 0 }}>
+          {([['donation', '📝 寄付を記録'], ['plan', '📋 プランを追加']] as const).map(([m, label]) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              style={{
+                padding: '7px 14px',
+                fontSize: 13,
+                fontWeight: mode === m ? 700 : 500,
+                color: mode === m ? (m === 'donation' ? '#16a34a' : '#7c3aed') : '#6b7280',
+                background: 'none',
+                border: 'none',
+                borderBottom: mode === m ? `2px solid ${m === 'donation' ? '#16a34a' : '#7c3aed'}` : '2px solid transparent',
+                marginBottom: -2,
+                cursor: 'pointer',
+                transition: 'color 0.15s',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* ── tab content ── */}
+        {mode === 'donation'
+          ? <DonationForm modal={modal} onClose={onClose} onSave={onSaveDonation} />
+          : <PlanForm     modal={modal} onClose={onClose} onSave={onSavePlan} />}
+      </div>
+    </div>
+  )
+}
+
+// ── DonationForm (tab 1) ──────────────────────────────────────────────────────
+
+function DonationForm({ modal, onClose, onSave }: {
+  modal: ModalState
+  onClose: () => void
+  onSave: (data: Omit<Donation, 'id'>) => void
+}) {
   const today = new Date().toISOString().slice(0, 10)
-  const [amount, setAmount]       = useState('')
-  const [date, setDate]           = useState(today)
-  const [giftItem, setGiftItem]   = useState('')
-  const [category, setCategory]   = useState<DonationCategory | ''>('')
-  const [site, setSite]           = useState<DonationSite>('Rakuten')
-  const [notes, setNotes]         = useState('')
-  const [saved, setSaved]         = useState(false)
+  const [amount, setAmount]     = useState('')
+  const [date, setDate]         = useState(today)
+  const [giftItem, setGiftItem] = useState('')
+  const [category, setCategory] = useState<DonationCategory | ''>('')
+  const [site, setSite]         = useState<DonationSite>('Rakuten')
+  const [notes, setNotes]       = useState('')
+  const [saved, setSaved]       = useState(false)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -321,164 +422,128 @@ function LogDonationModal({ modal, onClose, onSave }: ModalProps) {
     setTimeout(onClose, 1500)
   }
 
-  const cardStyle: React.CSSProperties = {
-    background: 'white',
-    borderRadius: 14,
-    padding: '22px 26px',
-    width: 'min(460px, 92vw)',
-    boxShadow: '0 8px 32px rgba(0,0,0,0.22)',
-    fontFamily: 'system-ui,-apple-system,sans-serif',
-  }
-
-  const labelStyle: React.CSSProperties = {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 4,
-    fontSize: 12,
-    fontWeight: 500,
-    color: '#4b5563',
+  if (saved) {
+    return <div style={{ textAlign: 'center', color: '#16a34a', fontWeight: 600, padding: '28px 0', fontSize: 16 }}>保存しました！</div>
   }
 
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0, zIndex: 2000,
-        background: 'rgba(0,0,0,0.45)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: '16px',
-      }}
-      onClick={onClose}
-    >
-      <div style={cardStyle} onClick={e => e.stopPropagation()}>
-        {/* header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
-          <div>
-            <h2 style={{ fontSize: 17, fontWeight: 700, margin: '0 0 4px', color: '#111827' }}>寄付を記録</h2>
-            <p style={{ fontSize: 13, color: '#374151', margin: 0 }}>
-              <strong>{esc(modal.prefecture)}</strong>　{esc(modal.municipality)}
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: '#9ca3af', lineHeight: 1, padding: '2px 4px' }}
-          >
-            ✕
-          </button>
+    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+      <label style={LABEL_STYLE}>
+        <span>寄付金額（円）<span style={{ color: '#f87171' }}>*</span></span>
+        <div style={{ position: 'relative' }}>
+          <input className="input" type="number" min={1} placeholder="10000" required
+            value={amount} onChange={e => setAmount(e.target.value)} style={{ paddingRight: '2rem' }} />
+          <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 12, color: '#9ca3af', pointerEvents: 'none' }}>円</span>
         </div>
-
-        {saved ? (
-          <div style={{ textAlign: 'center', color: '#16a34a', fontWeight: 600, padding: '28px 0', fontSize: 16 }}>
-            保存しました！
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-            {/* amount */}
-            <label style={labelStyle}>
-              <span>寄付金額（円）<span style={{ color: '#f87171' }}>*</span></span>
-              <div style={{ position: 'relative' }}>
-                <input
-                  className="input"
-                  type="number"
-                  min={1}
-                  placeholder="10000"
-                  required
-                  value={amount}
-                  onChange={e => setAmount(e.target.value)}
-                  style={{ paddingRight: '2rem' }}
-                />
-                <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 12, color: '#9ca3af', pointerEvents: 'none' }}>円</span>
-              </div>
-            </label>
-
-            {/* date */}
-            <label style={labelStyle}>
-              <span>寄付日<span style={{ color: '#f87171' }}>*</span></span>
-              <input
-                className="input"
-                type="date"
-                required
-                value={date}
-                onChange={e => setDate(e.target.value)}
-              />
-            </label>
-
-            {/* gift item */}
-            <label style={labelStyle}>
-              <span>返礼品名<span style={{ color: '#f87171' }}>*</span></span>
-              <input
-                className="input"
-                placeholder="例: 余市産リンゴ 5kg"
-                required
-                value={giftItem}
-                onChange={e => setGiftItem(e.target.value)}
-              />
-            </label>
-
-            {/* category + site — side by side */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <label style={labelStyle}>
-                <span>カテゴリ</span>
-                <select
-                  className="input"
-                  value={category}
-                  onChange={e => setCategory(e.target.value as DonationCategory | '')}
-                >
-                  <option value="">選択（任意）</option>
-                  {DONATION_CATEGORIES.map(c => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-              </label>
-              <label style={labelStyle}>
-                <span>サイト</span>
-                <select
-                  className="input"
-                  value={site}
-                  onChange={e => setSite(e.target.value as DonationSite)}
-                >
-                  {SITES.map(s => (
-                    <option key={s} value={s}>{SITE_LABELS[s]}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-
-            {/* notes */}
-            <label style={labelStyle}>
-              <span>メモ</span>
-              <textarea
-                className="input"
-                rows={2}
-                placeholder="任意のメモ"
-                value={notes}
-                onChange={e => setNotes(e.target.value)}
-                style={{ resize: 'none' }}
-              />
-            </label>
-
-            <button
-              type="submit"
-              style={{
-                marginTop: 4,
-                padding: '10px 0',
-                background: '#16a34a',
-                color: 'white',
-                fontWeight: 600,
-                fontSize: 14,
-                border: 'none',
-                borderRadius: 8,
-                cursor: 'pointer',
-                transition: 'background 0.15s',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#15803d')}
-              onMouseLeave={e => (e.currentTarget.style.background = '#16a34a')}
-            >
-              記録する
-            </button>
-          </form>
-        )}
+      </label>
+      <label style={LABEL_STYLE}>
+        <span>寄付日<span style={{ color: '#f87171' }}>*</span></span>
+        <input className="input" type="date" required value={date} onChange={e => setDate(e.target.value)} />
+      </label>
+      <label style={LABEL_STYLE}>
+        <span>返礼品名<span style={{ color: '#f87171' }}>*</span></span>
+        <input className="input" placeholder="例: 余市産リンゴ 5kg" required
+          value={giftItem} onChange={e => setGiftItem(e.target.value)} />
+      </label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <label style={LABEL_STYLE}>
+          <span>カテゴリ</span>
+          <select className="input" value={category} onChange={e => setCategory(e.target.value as DonationCategory | '')}>
+            <option value="">選択（任意）</option>
+            {DONATION_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </label>
+        <label style={LABEL_STYLE}>
+          <span>サイト</span>
+          <select className="input" value={site} onChange={e => setSite(e.target.value as DonationSite)}>
+            {SITES.map(s => <option key={s} value={s}>{SITE_LABELS[s]}</option>)}
+          </select>
+        </label>
       </div>
-    </div>
+      <label style={LABEL_STYLE}>
+        <span>メモ</span>
+        <textarea className="input" rows={2} placeholder="任意のメモ"
+          value={notes} onChange={e => setNotes(e.target.value)} style={{ resize: 'none' }} />
+      </label>
+      <button type="submit" style={{ marginTop: 4, padding: '10px 0', background: '#16a34a', color: 'white', fontWeight: 600, fontSize: 14, border: 'none', borderRadius: 8, cursor: 'pointer' }}
+        onMouseEnter={e => (e.currentTarget.style.background = '#15803d')}
+        onMouseLeave={e => (e.currentTarget.style.background = '#16a34a')}>
+        記録する
+      </button>
+    </form>
+  )
+}
+
+// ── PlanForm (tab 2) ──────────────────────────────────────────────────────────
+
+function PlanForm({ modal, onClose, onSave }: {
+  modal: ModalState
+  onClose: () => void
+  onSave: (data: Omit<Plan, 'id'>) => void
+}) {
+  const [amount, setAmount]     = useState('')
+  const [year, setYear]         = useState(CURRENT_YEAR)
+  const [giftItem, setGiftItem] = useState('')
+  const [site, setSite]         = useState<PlanSite>('Rakuten')
+  const [notes, setNotes]       = useState('')
+  const [saved, setSaved]       = useState(false)
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    onSave({
+      prefecture:      modal.prefecture,
+      municipality:    modal.municipality,
+      plannedAmount:   Number(amount),
+      year,
+      targetGiftItem:  giftItem,
+      site,
+      notes,
+      status:          'planned',
+    })
+    setSaved(true)
+    setTimeout(onClose, 1500)
+  }
+
+  if (saved) {
+    return <div style={{ textAlign: 'center', color: '#7c3aed', fontWeight: 600, padding: '28px 0', fontSize: 16 }}>プランを追加しました！</div>
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <label style={LABEL_STYLE}>
+          <span>予定金額（円）<span style={{ color: '#f87171' }}>*</span></span>
+          <input className="input" type="number" min={1} placeholder="10000" required
+            value={amount} onChange={e => setAmount(e.target.value)} />
+        </label>
+        <label style={LABEL_STYLE}>
+          <span>年度</span>
+          <input className="input" type="number" min={2020} max={2099}
+            value={year} onChange={e => setYear(Number(e.target.value) || CURRENT_YEAR)} />
+        </label>
+      </div>
+      <label style={LABEL_STYLE}>
+        <span>希望返礼品</span>
+        <input className="input" placeholder="例: 余市産リンゴ 5kg（任意）"
+          value={giftItem} onChange={e => setGiftItem(e.target.value)} />
+      </label>
+      <label style={LABEL_STYLE}>
+        <span>サイト</span>
+        <select className="input" value={site} onChange={e => setSite(e.target.value as PlanSite)}>
+          {PLAN_SITES.map(s => <option key={s} value={s}>{SITE_LABELS[s]}</option>)}
+        </select>
+      </label>
+      <label style={LABEL_STYLE}>
+        <span>メモ</span>
+        <textarea className="input" rows={2} placeholder="任意のメモ"
+          value={notes} onChange={e => setNotes(e.target.value)} style={{ resize: 'none' }} />
+      </label>
+      <button type="submit" style={{ marginTop: 4, padding: '10px 0', background: '#7c3aed', color: 'white', fontWeight: 600, fontSize: 14, border: 'none', borderRadius: 8, cursor: 'pointer' }}
+        onMouseEnter={e => (e.currentTarget.style.background = '#6d28d9')}
+        onMouseLeave={e => (e.currentTarget.style.background = '#7c3aed')}>
+        プランを追加
+      </button>
+    </form>
   )
 }
 
@@ -510,8 +575,13 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
   const [plans, setPlans] = useState<Plan[]>([])
   useEffect(() => { setPlans(getPlans()) }, [])
 
-  // Log modal
+  // Action modal (donation or plan)
   const [logModal, setLogModal] = useState<ModalState | null>(null)
+
+  function handleAddPlan(data: Omit<Plan, 'id'>) {
+    const newPlan = addPlan(data)
+    setPlans(prev => [...prev, newPlan])
+  }
 
   // ── fetch prefecture GeoJSON once ─────────────────────────────────
   useEffect(() => {
@@ -593,8 +663,12 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
     const ds = name ? (byPrefecture[name] ?? []) : []
     const total = ds.reduce((s, d) => s + d.amount, 0)
     const dimmed = selectedPref !== null && name !== selectedPref
+    const hasPlans = name ? (activePlansByPref[name] ?? []).length > 0 : false
+    const fillColor = total > 0
+      ? amountToColor(total, maxAmount)
+      : hasPlans ? PREF_PLAN_COLOR : NO_DONATION_COLOR
     return {
-      fillColor: amountToColor(total, maxAmount),
+      fillColor,
       fillOpacity: dimmed ? PREF_DIM : 0.75,
       color: '#9ca3af',
       weight: dimmed ? 0.5 : 0.8,
@@ -642,14 +716,13 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
   function styleMuniFeature(feature?: GeoFeature): L.PathOptions {
     const props = feature?.properties ?? {}
     const muniName = ((props.N03_004 ?? props.N03_003) ?? '') as string
-    const prefDons = selectedPref ? (byPrefecture[selectedPref] ?? []) : []
+    const prefDons  = selectedPref ? (byPrefecture[selectedPref] ?? []) : []
+    const prefPlans = selectedPref ? (activePlansByPref[selectedPref] ?? []) : []
     const hasDonation = prefDons.some(d => d.municipality === muniName)
-    return {
-      fillColor:   hasDonation ? MUNI_FILL_DONE : MUNI_FILL,
-      fillOpacity: hasDonation ? 0.65 : 0.3,
-      color:       MUNI_STROKE,
-      weight:      1,
-    }
+    const hasPlan     = prefPlans.some(p => p.municipality === muniName)
+    const fillColor   = hasDonation ? MUNI_FILL_DONE : hasPlan ? MUNI_FILL_PLAN : MUNI_FILL
+    const fillOpacity = hasDonation ? 0.65 : hasPlan ? 0.55 : 0.3
+    return { fillColor, fillOpacity, color: MUNI_STROKE, weight: 1 }
   }
 
   // ── municipality layer events ──────────────────────────────────────
@@ -658,29 +731,34 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
     const muniName = ((props.N03_004 ?? props.N03_003) ?? '') as string
     if (!muniName) return
 
-    const path = layer as L.Path
-    const prefDons = selectedPref ? (byPrefecture[selectedPref] ?? []) : []
+    const path      = layer as L.Path
+    const prefDons  = selectedPref ? (byPrefecture[selectedPref] ?? []) : []
+    const prefPlans = selectedPref ? (activePlansByPref[selectedPref] ?? []) : []
+
     const muniTotal = prefDons
       .filter(d => d.municipality === muniName)
       .reduce((s, d) => s + d.amount, 0)
+    const muniPlan = prefPlans.find(p => p.municipality === muniName)
 
-    const tipHtml = muniTotal > 0
-      ? `${esc(muniName)}<br><span style="color:#16a34a;font-weight:700;">¥${muniTotal.toLocaleString()}</span>`
-      : esc(muniName)
+    const hasDonation = muniTotal > 0
+    const hasPlan     = !!muniPlan
 
+    // Tooltip
+    let tipHtml = esc(muniName)
+    if (hasDonation) tipHtml += `<br><span style="color:#16a34a;font-weight:700;">¥${muniTotal.toLocaleString()}</span>`
+    if (hasPlan && !hasDonation) tipHtml += `<br><span style="color:#7c3aed;font-weight:600;">📋 ¥${muniPlan!.plannedAmount.toLocaleString()}</span>`
     layer.bindTooltip(tipHtml, { sticky: true, direction: 'top' })
+
+    const restoreOpacity = hasDonation ? 0.65 : hasPlan ? 0.55 : 0.3
+    const hoverColor     = hasPlan && !hasDonation ? '#7c3aed' : MUNI_HIGHLIGHT
 
     layer.on({
       mouseover() {
-        path.setStyle({ weight: 2.5, color: MUNI_HIGHLIGHT, fillOpacity: 0.8 })
+        path.setStyle({ weight: 2.5, color: hoverColor, fillOpacity: 0.85 })
         path.bringToFront()
       },
       mouseout() {
-        path.setStyle({
-          weight: 1,
-          color: MUNI_STROKE,
-          fillOpacity: muniTotal > 0 ? 0.65 : 0.3,
-        })
+        path.setStyle({ weight: 1, color: MUNI_STROKE, fillOpacity: restoreOpacity })
       },
       click() {
         if (selectedPref) {
@@ -751,7 +829,7 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
         {/* Municipality layer — shown when a prefecture is selected and data is loaded */}
         {selectedPref && currentMuniData && (
           <GeoJSON
-            key={`muni-${selectedPref}`}
+            key={`muni-${selectedPref}-${(activePlansByPref[selectedPref] ?? []).length}`}
             data={currentMuniData as unknown as GeoJSON.GeoJsonObject}
             style={styleMuniFeature as unknown as L.StyleFunction}
             onEachFeature={onEachMuniFeature as unknown as (f: GeoJSON.Feature, l: L.Layer) => void}
@@ -850,17 +928,15 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
         </div>
       )}
 
-      <Legend year={selectedYear} />
+      <Legend year={selectedYear} inMuniMode={!!selectedPref} />
 
-      {/* Log donation modal */}
+      {/* Municipality action modal (donation or plan) */}
       {logModal && (
-        <LogDonationModal
+        <MuniActionModal
           modal={logModal}
           onClose={() => setLogModal(null)}
-          onSave={(data) => {
-            onAddDonation(data)
-            // modal auto-closes after 1.5s (handled inside LogDonationModal)
-          }}
+          onSaveDonation={(data) => { onAddDonation(data) }}
+          onSavePlan={(data) => { handleAddPlan(data) }}
         />
       )}
     </div>
