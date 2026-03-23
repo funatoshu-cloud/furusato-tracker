@@ -53,6 +53,165 @@ function yearLabel(y: number | 'all') {
   return y === 'all' ? '全年度' : `${y}年`
 }
 
+// ── deadline helpers ──────────────────────────────────────────────────────────
+
+const WEEKDAY_JA = ['日', '月', '火', '水', '木', '金', '土']
+
+function daysUntil(target: Date): number {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const t = new Date(target)
+  t.setHours(0, 0, 0, 0)
+  return Math.round((t.getTime() - today.getTime()) / 86_400_000)
+}
+
+function fmtDate(d: Date): string {
+  return `${d.getMonth() + 1}月${d.getDate()}日（${WEEKDAY_JA[d.getDay()]}）`
+}
+
+function DeadlineItem({
+  icon, label, date, days, passed, caution,
+}: {
+  icon: string; label: string; date: string
+  days: number; passed: boolean; caution: boolean
+}) {
+  return (
+    <div className="flex items-center gap-3 min-w-0">
+      <span className="text-xl shrink-0">{icon}</span>
+      <div>
+        <p className="text-xs text-gray-500 leading-tight">{label}</p>
+        <p className="font-semibold text-gray-900 text-sm leading-snug">{date}</p>
+        <p className={`text-xs mt-0.5 font-semibold ${
+          passed ? 'text-gray-400' : caution ? 'text-amber-600' : 'text-green-600'
+        }`}>
+          {passed ? '締め切り終了' : days === 0 ? '今日が期限！' : `あと ${days}日`}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function DeadlineReminders() {
+  const today = new Date()
+  const year  = today.getFullYear()
+
+  // Main furusato deadline: Dec 31 of the current year
+  const mainDeadline = new Date(year, 11, 31)
+  const daysMain     = daysUntil(mainDeadline)
+
+  // One-stop exception deadline: Jan 10 following the donation year.
+  // If today is on/before Jan 10 of this year → one-stop applies to last year's donations.
+  // Otherwise → next Jan 10 applies to this year's donations.
+  const jan10This   = new Date(year, 0, 10)
+  const onestop     = today <= jan10This ? jan10This : new Date(year + 1, 0, 10)
+  const onestopYear = today <= jan10This ? year - 1 : year
+  const daysOnestop = daysUntil(onestop)
+
+  // Severity flags
+  const mainPassed   = daysMain < 0
+  const mainUrgent   = !mainPassed && daysMain <= 7
+  const mainWarn     = !mainPassed && daysMain <= 30
+  const mainCaution  = !mainPassed && daysMain <= 60
+
+  const onestopPassed = daysOnestop < 0
+  const onestopUrgent = !onestopPassed && daysOnestop <= 7
+  const onestopWarn   = !onestopPassed && daysOnestop <= 30
+
+  // Show one-stop banner only when it's nearby (approaching within 60 days or just passed within 5 days)
+  const showOnestopBanner = daysOnestop >= -5 && daysOnestop <= 60
+
+  return (
+    <div className="space-y-2">
+
+      {/* ── Main deadline warning banner (≤30 days) ───────────────── */}
+      {mainWarn && (
+        <div className={`flex items-center gap-3 rounded-xl px-4 py-3 border ${
+          mainUrgent
+            ? 'bg-red-50 border-red-200 text-red-800'
+            : 'bg-orange-50 border-orange-200 text-orange-800'
+        }`}>
+          <span className="text-2xl shrink-0">{mainUrgent ? '🚨' : '⚠️'}</span>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-sm leading-tight">
+              {daysMain === 0
+                ? 'ふるさと納税の締め切りは今日です！'
+                : `ふるさと納税の締め切りまであと ${daysMain}日`}
+            </p>
+            <p className="text-xs mt-0.5 opacity-80">
+              {fmtDate(mainDeadline)}が{year}年分の受付期限です
+            </p>
+          </div>
+          <Link
+            href="/log"
+            className={`shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+              mainUrgent
+                ? 'bg-red-600 text-white hover:bg-red-700'
+                : 'bg-orange-600 text-white hover:bg-orange-700'
+            }`}
+          >
+            寄付を記録 →
+          </Link>
+        </div>
+      )}
+
+      {/* ── One-stop exception warning banner ─────────────────────── */}
+      {showOnestopBanner && (
+        <div className={`flex items-center gap-3 rounded-xl px-4 py-3 border ${
+          onestopPassed
+            ? 'bg-gray-50 border-gray-200 text-gray-500'
+            : onestopUrgent
+              ? 'bg-red-50 border-red-200 text-red-800'
+              : onestopWarn
+                ? 'bg-purple-50 border-purple-200 text-purple-800'
+                : 'bg-blue-50 border-blue-100 text-blue-800'
+        }`}>
+          <span className="text-2xl shrink-0">
+            {onestopPassed ? '📋' : onestopUrgent ? '🚨' : '📋'}
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-sm leading-tight">
+              ワンストップ特例（{onestopYear}年分）
+              {onestopPassed
+                ? ' — 申請期限終了'
+                : daysOnestop === 0
+                  ? ' — 今日が申請期限！'
+                  : ` — あと ${daysOnestop}日`}
+            </p>
+            <p className="text-xs mt-0.5 opacity-80">
+              {onestopPassed
+                ? `申請期限（${fmtDate(onestop)}）はすでに終了しています`
+                : `${fmtDate(onestop)}までに各自治体へ申請書を郵送してください`}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── Quiet info strip (shown when no warning banners are active) ── */}
+      {!mainWarn && (
+        <div className="flex items-center gap-6 bg-white rounded-xl border border-gray-100 px-5 py-3 flex-wrap gap-y-3">
+          <DeadlineItem
+            icon="🗓️"
+            label={`${year}年分　申込期限`}
+            date={fmtDate(mainDeadline)}
+            days={daysMain}
+            passed={mainPassed}
+            caution={mainCaution}
+          />
+          <div className="w-px h-10 bg-gray-100 shrink-0 hidden sm:block" />
+          <DeadlineItem
+            icon="📋"
+            label={`ワンストップ特例　${onestopYear}年分`}
+            date={fmtDate(onestop)}
+            days={daysOnestop}
+            passed={onestopPassed}
+            caution={onestopWarn}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── page ──────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -256,6 +415,9 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* ── deadline reminders ── */}
+      <DeadlineReminders />
 
       {/* ── summary cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
