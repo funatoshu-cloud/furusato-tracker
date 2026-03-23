@@ -12,6 +12,7 @@ import { getPlans, type Plan } from '@/lib/plans'
 import { loadTaxSettings, calculate } from '@/lib/calculator'
 import { PREFECTURES } from '@/lib/prefectures'
 import { yen } from '@/lib/format'
+import { isDemoMode, loadDemoData, clearDemoData } from '@/lib/sampleData'
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
@@ -221,13 +222,29 @@ export default function DashboardPage() {
   const [sortField,    setSortField]    = useState<SortField>('date')
   const [sortDir,      setSortDir]      = useState<SortDir>('desc')
   const [selectedYear, setSelectedYear] = useState<number | 'all'>(CURRENT_YEAR)
+  const [demoMode,     setDemoMode]     = useState(false)
 
   useEffect(() => {
     setDonations(getDonations())
     setPlans(getPlans())
     const s = loadTaxSettings()
     if (s && s.income > 0) setLimit(calculate(s).limit)
+    setDemoMode(isDemoMode())
   }, [])
+
+  function handleLoadDemo() {
+    const { donations: d, plans: p } = loadDemoData()
+    setDonations(d)
+    setPlans(p)
+    setDemoMode(true)
+  }
+
+  function handleClearDemo() {
+    clearDemoData()
+    setDonations([])
+    setPlans([])
+    setDemoMode(false)
+  }
 
   // ── derived data ────────────────────────────────────────────────────────────
 
@@ -419,11 +436,14 @@ export default function DashboardPage() {
       {/* ── deadline reminders ── */}
       <DeadlineReminders />
 
+      {/* ── demo mode banner ── */}
+      {demoMode && <DemoBanner onClear={handleClearDemo} />}
+
       {/* ── settings nudge (shown until income is configured) ── */}
       {limit === null && <SettingsNudge />}
 
       {/* ── getting started (shown when no donations recorded yet) ── */}
-      {donations.length === 0 && <GettingStartedCard />}
+      {donations.length === 0 && <GettingStartedCard onLoadDemo={handleLoadDemo} />}
 
       {/* ── summary cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
@@ -783,6 +803,31 @@ function ChartEmpty() {
 // ── onboarding helpers ────────────────────────────────────────────────────────
 
 /**
+ * Amber banner shown while sample / demo data is active.
+ * One-click clear wipes all donations + plans and hides the banner.
+ */
+function DemoBanner({ onClear }: { onClear: () => void }) {
+  return (
+    <div className="flex items-center gap-4 bg-amber-50 border border-amber-200 rounded-xl px-5 py-3.5">
+      <span className="text-2xl shrink-0 select-none">🎭</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-amber-900">サンプルデータを表示中</p>
+        <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
+          これはデモ用のサンプルデータです。自分のデータを入力する準備ができたらクリアしてください。
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onClear}
+        className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 transition-colors whitespace-nowrap"
+      >
+        クリアして始める
+      </button>
+    </div>
+  )
+}
+
+/**
  * Blue nudge banner — visible until the user sets income > 0 in Settings.
  * Disappears automatically once `calculate(settings).limit` is available.
  */
@@ -810,7 +855,7 @@ function SettingsNudge() {
  * Green "getting started" card — visible when zero donations have been recorded.
  * Replaced automatically by real content as soon as the first donation is saved.
  */
-function GettingStartedCard() {
+function GettingStartedCard({ onLoadDemo }: { onLoadDemo: () => void }) {
   return (
     <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-100 rounded-xl p-6">
       <p className="text-sm font-semibold text-green-800 mb-4">さっそく始めましょう</p>
@@ -833,6 +878,18 @@ function GettingStartedCard() {
           desc="寄付予定を事前に管理する"
           href="/plan"
         />
+      </div>
+      <div className="mt-4 pt-4 border-t border-green-100 flex items-center justify-between gap-4 flex-wrap">
+        <p className="text-xs text-green-700 opacity-70">
+          まずはサンプルデータでダッシュボードの見た目を確認できます
+        </p>
+        <button
+          type="button"
+          onClick={onLoadDemo}
+          className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg border border-green-200 text-green-700 bg-white hover:bg-green-50 transition-colors"
+        >
+          サンプルを読み込む →
+        </button>
       </div>
     </div>
   )

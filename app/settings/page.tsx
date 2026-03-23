@@ -110,6 +110,9 @@ export default function SettingsPage() {
     <div className="p-4 sm:p-8 max-w-2xl space-y-6">
       <h2 className="text-2xl font-bold text-gray-900">設定</h2>
 
+      {/* ── ふるさと納税とは？ explainer ── */}
+      <FurusatoExplainer />
+
       {/* ── 控除上限額 シミュレーター ── */}
       <section className="bg-white rounded-xl border border-green-200">
         <div className="px-6 py-4 border-b border-green-100">
@@ -178,6 +181,10 @@ export default function SettingsPage() {
                 円
               </span>
             </div>
+            <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+              源泉徴収票の「<strong className="text-gray-500">支払金額</strong>」（税・社会保険料を引く前の額面年収）を入力してください。
+              給与明細の月収 × 12ではなく、必ず源泉徴収票でご確認ください。
+            </p>
           </div>
 
           {/* 扶養家族 */}
@@ -196,8 +203,11 @@ export default function SettingsPage() {
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-400 mt-1">
-              控除対象の扶養家族の人数を入力してください（一般扶養として計算）。
+            <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+              税法上の扶養控除の対象となる方の人数です。
+              専業主婦・夫の配偶者（年収103万円以下）や
+              <strong className="text-gray-500">16歳以上</strong>の子供が対象です。
+              16歳未満の子供・共働きの配偶者は含みません。
             </p>
           </div>
 
@@ -224,9 +234,17 @@ export default function SettingsPage() {
                 </label>
               ))}
             </div>
-            <p className="text-xs text-gray-400 mt-1">
-              ※ 上限額の計算式はどちらも同じです。方法によって手続きと注意事項が異なります。
-            </p>
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2 leading-relaxed">
+                <p className="font-semibold text-gray-700 mb-0.5">ワンストップ特例</p>
+                寄付先が<strong>5自治体以内</strong>の給与所得者向け。各自治体に申請書を郵送するだけで確定申告不要。
+              </div>
+              <div className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2 leading-relaxed">
+                <p className="font-semibold text-gray-700 mb-0.5">確定申告</p>
+                <strong>6自治体以上</strong>または自営業・フリーランスの方。制限なく寄付できるが、確定申告での申告が必要。
+              </div>
+            </div>
+            <p className="text-xs text-gray-400 mt-1.5">※ 上限額の計算式はどちらも同じです。</p>
           </div>
 
           {/* 住宅ローン控除 */}
@@ -261,8 +279,9 @@ export default function SettingsPage() {
                     円
                   </span>
                 </div>
-                <p className="text-xs text-gray-400 mt-1">
-                  不明な場合は源泉徴収票の「住宅借入金等特別控除の額」をご確認ください。
+                <p className="text-xs text-gray-400 mt-1 leading-relaxed">
+                  源泉徴収票の「<strong className="text-gray-500">住宅借入金等特別控除の額</strong>」をご確認ください。
+                  住宅ローン控除は所得税から優先適用されるため、控除額が大きいとふるさと納税の節税効果が住民税ルートのみとなり、上限額が下がる場合があります。
                 </p>
               </div>
             )}
@@ -385,6 +404,84 @@ export default function SettingsPage() {
         </button>
         {cleared && <span className="ml-3 text-sm text-green-600">削除しました。</span>}
       </section>
+    </div>
+  )
+}
+
+// ── beginner explainer ────────────────────────────────────────────────────────
+
+function FurusatoExplainer() {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-gray-50 transition-colors"
+      >
+        <div className="flex items-center gap-2.5">
+          <span className="text-xl select-none">🗾</span>
+          <div>
+            <p className="text-sm font-semibold text-gray-900">ふるさと納税とは？</p>
+            <p className="text-xs text-gray-400 mt-0.5">仕組み・用語・手続きの基本を確認する</p>
+          </div>
+        </div>
+        <span className={`text-gray-300 transition-transform duration-200 text-sm select-none ${open ? 'rotate-180' : ''}`}>
+          ▼
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-gray-100 px-6 py-5 space-y-4 text-sm text-gray-600 leading-relaxed">
+
+          <ExplainerItem icon="💡" title="基本の仕組み">
+            全国の自治体に寄付をすると、<strong className="text-gray-800">2,000円を超えた金額が翌年の所得税・住民税から控除（還付）</strong>されます。
+            返礼品（お礼の品）ももらえるため、実質的に食費や日用品を節税しながら受け取れる制度です。
+          </ExplainerItem>
+
+          <ExplainerItem icon="💰" title="自己負担2,000円のルール">
+            何か所に寄付しても、どれだけの金額を寄付しても、<strong className="text-gray-800">自己負担は一律2,000円だけ</strong>です。
+            ただし、これは控除上限額の範囲内で寄付した場合のみ。上限を超えた分は全額自己負担になります。
+          </ExplainerItem>
+
+          <ExplainerItem icon="📊" title="控除上限額とは">
+            「2,000円の自己負担で済む寄付額の上限」のことです。
+            <strong className="text-gray-800">年収・家族構成によって異なり</strong>、年収300万円で約2万円、500万円で約6万円、700万円で約11万円が目安です。
+            下のシミュレーターで正確な金額を計算できます。
+          </ExplainerItem>
+
+          <ExplainerItem icon="📋" title="ワンストップ特例 vs 確定申告">
+            <strong className="text-gray-800">ワンストップ特例</strong>は寄付先が5自治体以内の給与所得者向け。
+            寄付の都度、各自治体に申請書を郵送するだけで確定申告不要です（1月10日必着）。
+            6自治体以上または自営業の方は<strong className="text-gray-800">確定申告</strong>で申告します。
+          </ExplainerItem>
+
+          <ExplainerItem icon="📄" title="寄附金受領証明書とは">
+            寄付後に各自治体から送られてくる書類です。
+            <strong className="text-gray-800">確定申告する方は必ず保管</strong>してください。
+            ワンストップ特例を使う方は申請書を送れば不要ですが、念のため保管しておくと安心です。
+            このアプリの寄付一覧で受取状況を管理できます。
+          </ExplainerItem>
+
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ExplainerItem({
+  icon, title, children,
+}: {
+  icon: string; title: string; children: React.ReactNode
+}) {
+  return (
+    <div className="flex gap-3">
+      <span className="text-lg shrink-0 select-none mt-0.5">{icon}</span>
+      <div>
+        <p className="font-semibold text-gray-800 mb-1">{title}</p>
+        <p className="text-xs text-gray-500 leading-relaxed">{children}</p>
+      </div>
     </div>
   )
 }
