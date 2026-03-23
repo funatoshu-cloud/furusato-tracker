@@ -686,18 +686,30 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
   // ── prefecture layer style ─────────────────────────────────────────
   function styleFeature(feature?: GeoFeature) {
     const name = feature?.properties?.nam_ja as string | undefined
+    const dimmed = selectedPref !== null && name !== selectedPref
+
+    // When drilled into a prefecture, drop the choropleth colour entirely so
+    // the municipality layer (blue / violet / green) reads without red competition.
+    if (selectedPref !== null) {
+      return {
+        fillColor: NO_DONATION_COLOR,
+        fillOpacity: name === selectedPref ? 0.05 : PREF_DIM,
+        color: '#9ca3af',
+        weight: dimmed ? 0.5 : 0.8,
+      }
+    }
+
     const ds = name ? (byPrefecture[name] ?? []) : []
     const total = ds.reduce((s, d) => s + d.amount, 0)
-    const dimmed = selectedPref !== null && name !== selectedPref
     const hasPlans = name ? (activePlansByPref[name] ?? []).length > 0 : false
     const fillColor = total > 0
       ? amountToColor(total, maxAmount)
       : hasPlans ? PREF_PLAN_COLOR : NO_DONATION_COLOR
     return {
       fillColor,
-      fillOpacity: dimmed ? PREF_DIM : 0.75,
+      fillOpacity: 0.75,
       color: '#9ca3af',
-      weight: dimmed ? 0.5 : 0.8,
+      weight: 0.8,
     }
   }
 
@@ -706,7 +718,17 @@ export default function DonationMap({ donations, onAddDonation }: Props) {
     const name = feature.properties?.nam_ja as string | undefined
     if (!name) return
 
-    layer.bindTooltip(name, { sticky: true, direction: 'center' })
+    // Tooltip: prefecture name + donation count/total + plan count/total
+    const tipDs    = byPrefecture[name] ?? []
+    const tipPlans = (activePlansByPref[name] ?? []).filter(p => selectedYear === 'all' || p.year === selectedYear)
+    const tipDonCount  = tipDs.length
+    const tipDonTotal  = tipDs.reduce((s, d) => s + d.amount, 0)
+    const tipPlanCount = tipPlans.length
+    const tipPlanTotal = tipPlans.reduce((s, p) => s + p.plannedAmount, 0)
+    let tipHtml = `<strong>${esc(name)}</strong>`
+    if (tipDonCount  > 0) tipHtml += `<br><span style="color:#16a34a;font-size:12px;">寄付 ${tipDonCount}件 ¥${tipDonTotal.toLocaleString()}</span>`
+    if (tipPlanCount > 0) tipHtml += `<br><span style="color:#7c3aed;font-size:12px;">📋 計画 ${tipPlanCount}件 ¥${tipPlanTotal.toLocaleString()}</span>`
+    layer.bindTooltip(tipHtml, { sticky: true, direction: 'center' })
     layer.bindPopup(buildPrefPopupHtml(name, byPrefectureAll[name] ?? [], selectedYear, activePlansByPref[name] ?? []), { maxWidth: 300 })
 
     const path = layer as L.Path
